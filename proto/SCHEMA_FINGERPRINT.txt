@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: a75a1e724bd2801bf3097c65a672696991f16dff7850e7d0ab145cef09486b3f
+# blake3-256: 616777d62c144b32f089fae2e1d9532846b63e4f6a1ebbb9111d59bcf0852733
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -54,6 +54,34 @@ artifact.proto::AttemptReportAck
   8 string coordinator_id
   9 uint64 issued_at_unix_ms
   10 bytes session_nonce
+  90 bytes coordinator_signature
+artifact.proto::AttemptRunNotice
+  1 uint32 schema_version
+  2 string job_id
+  3 string attempt_id
+  4 string node_id
+  5 uint64 fence_epoch
+  6 RunNoticeKind kind
+  7 RunUnknownOrigin origin
+  8 RunUnknownReason reason
+  9 RunStopEvidence stop_evidence
+  10 uint64 sequence
+  11 uint64 observed_at_unix_ms
+  12 uint64 issued_at_unix_ms
+  90 bytes node_signature
+artifact.proto::AttemptRunNoticeAck
+  1 uint32 schema_version
+  2 string job_id
+  3 string attempt_id
+  4 string node_id
+  5 uint64 fence_epoch
+  6 Digest notice_hash
+  7 RunNoticeKind kind
+  8 uint64 sequence
+  9 bool created
+  10 string coordinator_id
+  11 uint64 issued_at_unix_ms
+  12 bytes session_nonce
   90 bytes coordinator_signature
 artifact.proto::CanonicalDecision
   1 uint32 schema_version
@@ -489,6 +517,29 @@ lease.proto::Lease
   34 uint64 reassignment_grace_ms
   40 ResourceScope scope
   90 bytes coordinator_signature
+lease.proto::MailboxAck
+  1 uint32 schema_version
+  2 string node_id
+  3 repeated SupersedeHandled handled
+  4 uint64 issued_at_unix_ms
+  5 bytes session_nonce
+  90 bytes node_signature
+lease.proto::MailboxAckReceipt
+  1 uint32 schema_version
+  2 string node_id
+  3 repeated string accepted
+  4 string coordinator_id
+  5 uint64 issued_at_unix_ms
+  6 bytes session_nonce
+  90 bytes coordinator_signature
+lease.proto::MailboxDelivery
+  1 uint32 schema_version
+  2 string node_id
+  3 repeated SupersedeNotice notices
+  4 string coordinator_id
+  5 uint64 issued_at_unix_ms
+  6 bytes session_nonce
+  90 bytes coordinator_signature
 lease.proto::NeighborUnreachableReport
   1 uint32 schema_version
   2 string reporter_node_id
@@ -569,4 +620,22 @@ lease.proto::RevokeLeaseNotice
   3 uint64 fence_epoch
   4 RevokeCause cause
   5 uint64 issued_at_unix_ms
+  90 bytes coordinator_signature
+lease.proto::SupersedeHandled
+  1 string notice_id
+  2 Digest notice_hash
+  3 MailboxAction action
+lease.proto::SupersedeNotice
+  1 uint32 schema_version
+  2 string notice_id
+  3 string job_id
+  4 string attempt_id
+  5 string node_id
+  6 uint64 fence_epoch
+  7 string lease_id
+  8 SupersedeCause cause
+  9 SupersedeJobDisposition job_disposition
+  10 uint64 decided_at_unix_ms
+  11 string coordinator_id
+  12 uint64 issued_at_unix_ms
   90 bytes coordinator_signature

@@ -23,10 +23,12 @@ use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePha
 pub mod checkpoint_publisher;
 pub mod container;
 pub mod exec;
+mod mailbox;
 pub mod multi_agent;
 pub mod owner_panel;
 pub mod progress;
 pub mod report;
+pub mod run_evidence;
 pub mod run_ledger;
 
 use gputeer_crypto::{
@@ -240,6 +242,10 @@ pub struct AgentConfig {
     pub run_ledger: bool,
     /// 기동 때 연 원장 — `run()` 이 채운다(파서는 비워 둔다). 실행 흐름이 시작 · 끝을 적는다.
     pub run_ledger_handle: Option<run_ledger::SharedRunLedger>,
+    /// ★ 2026-10-03 11:15 (실행 알림 계획 조각 5d · 계약 §5) — 실행 알림을 쓰는가. 켜지면 기동 때 남은 컨테이너 실행을 §4 자동 증거로 판정해 STOP_CONFIRMED
+    ///   (STOP_PENDING) 또는 RUN_UNKNOWN(OPEN) 알림을 원장에 적는다. 꺼지면 지금처럼 LOCAL_BLOCKED(계약 b14 ② — 알릴 길이 없는 동안의 보수).
+    ///   ★ 명령줄로 켜는 길은 아직 없다 — 계약은 ADR-034 강제 코드 없이 켜면 기동을 거부하라고 한다(조각 5f 가 그 관문과 함께 연다). 지금은 격리 시험만 켠다.
+    pub send_run_notice: bool,
     /// Owner Panel 을 띄울 포트. `None` 이면 안 띄운다.
     ///
     /// ★ 주소는 받지 않는다 — `127.0.0.1` 고정이다(`CLAUDE.md` §0.1).
@@ -319,6 +325,9 @@ pub struct AgentConfig {
     /// ★ 2026-09-23 (결함 131 · 신뢰망 L) — ACK 를 보낸 뒤 Coordinator 의 **서명된 수신 확인**을 받아야만 실행한다.
     ///   받지 못하면(옛 Coordinator · 거부된 ACK · 끊긴 연결) 실행하지 않고 멈춘다(fail-closed). 풀 모드에서 켠다.
     pub require_ack_receipt: bool,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 회차마다 FRESH 를 열기 전에 MAILBOX 세션으로 "그 시도는 폐기됐다" 통지를 받아 처리한다.
+    ///   남은 통지가 있으면 그 회차는 일을 받지 않는다. `--run-ledger` · `--require-ack-receipt` 없이는 기동 거부(풀 모드 전용 — 제안 §4).
+    pub use_mailbox: bool,
     /// ★ 2026-09-25 (결함 301 · signing.md §6.6) — FRESH Hello 에 NVML 로 읽은 GPU 목록을 서명해 싣는다(Hello v2).
     ///   풀 Coordinator 는 등록된 선언과 맞을 때만 "그 선언이 지금도 사실이다" 는 확인 기록을 남긴다 — 그래야 운영자가
     ///   다시 선언하지 않아도 이 노드가 신선도 검사에서 떨어지지 않는다. 기본 끔: 구버전 Coordinator 는 Hello v2 를 거부한다.
@@ -490,6 +499,15 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    // ★ 2026-10-03 11:51 (실행 알림 계획 §4 활성화 관문 · 조각 5f) — 실행 알림 보내기는 ADR-034 강제 코드와 실행 여부 불명 보류(조각 6)가 들어온 뒤에 켠다.
+    //   그 전에는 켜는 즉시 기동을 거부한다(배포 바이너리에 우회가 없다). 기능은 격리 시험이 설정 칸을 직접 켜서 잰다.
+    if config.send_run_notice {
+        return Err(
+            "STARTUP_REFUSED: RUN_NOTICE_NOT_ACTIVATED — --send-run-notice 는 ADR-034 강제 코드와 실행 여부 불명 보류(조각 6)가 들어온 뒤에 켠다 \
+             — 지금은 격리 시험에서만 쓴다"
+                .into(),
+        );
+    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -531,6 +549,21 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         return Err(
             "POOL_AGENT_NEEDS_RENEW: --require-ack-receipt 인 풀 Agent 는 --renew-during-execution-ms 를 켜야 한다 — \
              첫 갱신이 \"실행을 시작했다\" 는 신호다(결함 218)"
+                .to_string(),
+        );
+    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 검수 mb2 ①) — 우편함은 풀 모드 전용이고(관문 · 수신 확인이 풀 경로에 있다), NOT_RUNNING 은 원장으로만
+    //   확인한다(재기동 뒤 살아 있는 컨테이너를 실행 목록만으로는 모른다). 둘 중 하나라도 없으면 켜지 않는다.
+    if config.use_mailbox && !config.require_ack_receipt {
+        return Err(
+            "USE_MAILBOX_NEEDS_ACK_RECEIPT: --use-mailbox 는 --require-ack-receipt 와 함께 켠다 — 우편함과 새 실행 관문은 풀 경로에만 있다"
+                .to_string(),
+        );
+    }
+    if config.use_mailbox && !config.run_ledger {
+        return Err(
+            "USE_MAILBOX_NEEDS_RUN_LEDGER: --use-mailbox 는 --run-ledger 와 함께 켠다 — \
+             \"이 노드에서 돌지 않는다\" 는 원장으로만 확인한다"
                 .to_string(),
         );
     }
@@ -674,6 +707,13 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     })?;
     config.run_ledger_handle =
         opened_ledger.map(|ledger| std::sync::Arc::new(std::sync::Mutex::new(ledger)));
+    // ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ① · v18p ①′) — 정지 결정을 stop 전에 원장에 적는 고리. 원장에 적지 못하면 그 컨테이너의 사건 표식을 쓴다
+    //   (기동이 원장보다 먼저 보고 새 작업 · 재부착을 막는다 — 조건 ⑧). 둘 다 못 써도 정지는 그대로 한다(§0.1).
+    if let Some(handle) = config.run_ledger_handle.clone() {
+        config
+            .owner_panel_state
+            .set_stop_recorder(stop_decision_recorder(handle, &config.checkpoint_root, &config.agent_device_id));
+    }
     // ★ 2026-09-25 (결함 290 · 291 · 295 · 재검수 90 · 91) — 체크포인트 루트를 **잠근 뒤에** 이 Agent 의 라벨로 남은 컨테이너를 모두 치운다.
     //   라벨은 노드 id 와 잠근 루트의 실제 위치 해시다 — 같은 루트를 잠근 Agent 는 하나뿐이므로, 지금 그 라벨로 도는 컨테이너는 죽은 회차가
     //   남긴 것이다. 전에는 잠금 **전에** 노드 id 만으로 지워, 같은 노드 id 로 잘못 뜬 두 번째 Agent 가 거부되기 전에 정상 실행 중인
@@ -715,9 +755,24 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         runtime.incident_dir = Some(incident_dir);
         // ★ 결함 489 — 지우기 전에 로그를 체크포인트 루트의 형제 `<루트>.leftover-container-logs/` 에 건진다(결함 523 — 노드마다 따로).
         let salvage_dir = container::leftover_logs_dir_for(&config.checkpoint_root);
-        let removed = container::remove_leftovers(runtime, Some(&salvage_dir)).map_err(|why| {
-            format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}")
-        })?;
+        // ★ 2026-10-03 11:51 (조각 5f) — 알림을 쓰는 Agent 는 막힌 행이 있어도 뜬다. 그때 남은 컨테이너 정리가 **불명인 실행의 컨테이너를 지우지 않게** 정리를
+        //   건너뛴다(계약 MUST 1 · v18h — 열린 행의 컨테이너는 정리 대상에서 뺀다. 행별 대상 고르기 대신 이번 회차 전체를 건너뛰는 보수).
+        let ledger_blocked = config.send_run_notice
+            && config.run_ledger_handle.as_ref().is_some_and(|handle| {
+                handle
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .blocks_new_work()
+                    .unwrap_or(true)
+            });
+        let removed = if ledger_blocked {
+            println!("CONTAINER_LEFTOVERS_SKIPPED — 원장에 막힌 행이 있어 남은 컨테이너를 정리하지 않는다(불명인 실행의 컨테이너일 수 있다)");
+            Vec::new()
+        } else {
+            container::remove_leftovers(runtime, Some(&salvage_dir)).map_err(|why| {
+                format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}")
+            })?
+        };
         if !removed.is_empty() {
             println!(
                 "CONTAINER_LEFTOVERS_REMOVED count={} ids={}",
@@ -785,8 +840,25 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     if config.report_over_session {
         flush_report_outbox(&config, &signing_key);
     }
+    // ★ 2026-10-03 11:51 (조각 5f · 계약 §5 "보내기" · 기동 관문) — 밀린 실행 알림을 보내고, 그래도 막힌 행이 남으면 새 작업을 받지 않는다.
+    if config.send_run_notice {
+        // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18o ⑤) — 발견 단계가 ACTIVE 로 둔 재부착 후보를 **여기서**(기동 GC · 소유자 패널 뒤 · 새 작업 관문 앞) 다시 확인하고
+        //   다시 붙어 끝까지 본다(그 회차에 FRESH 없음 — v18j). 승인하지 못하면 5e1 경로(멈추기 · 증거 판정 · OPEN)로 보낸다.
+        reattach_active_rows(&config, &signing_key)?;
+        flush_run_notices_then_gate(&config, &signing_key)?;
+    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — **모든** FRESH 연결 직전에 우편함을 비운다(첫 연결 · 재접속마다 — 검수 mba1). 남으면 이 회차는
+    //   일을 받지 않는다(다음 회차에 다시). Coordinator 의 새 실행 관문이 어차피 막지만, 두드리지 않는 것이 낫다 — 받지도 못할 Grant 를 위해 예약을
+    //   붙잡게 하지 않는다. ★ FRESH 연결을 연 **뒤에** 묻지 않는다 — 풀 Coordinator 는 순차 리스너라 열린 FRESH 연결이 우편함 연결을 막는다.
+    let empty_mailbox = |config: &AgentConfig| -> Result<(), String> {
+        if config.use_mailbox {
+            mailbox::empty_before_fresh(config, &signing_key)?;
+        }
+        Ok(())
+    };
     let mut budget = RetryBudget::new(&policy);
     if !config.reconnect_enabled {
+        empty_mailbox(&config)?;
         let stream = connect_with_timeout(&config.coordinator_addr, policy.connect_timeout)
             .map_err(|e| format!("Coordinator connect failed: {e}"))?;
         return run_one_connection(
@@ -828,6 +900,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             std::thread::sleep(jitter);
         }
 
+        empty_mailbox(&config)?;
         let connection_result =
             match connect_with_timeout(&config.coordinator_addr, policy.connect_timeout) {
                 Ok(stream) => {
@@ -1044,6 +1117,8 @@ fn run_resume_connection(
         5 => Err("RESUME_REFUSED:UNKNOWN_LEASE".into()),
         6 => Err("RESUME_REFUSED:IDENTITY_CONFLICT".into()),
         8 => Err("RESUME_REFUSED:EPOCH_AHEAD".into()),
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — 그 시도가 실행 여부 불명(보류)이다. 재시도하지 않는다.
+        9 => Err("RESUME_REFUSED:RUN_UNKNOWN_HELD".into()),
         outcome => Err(format!(
             "RESUME_REJECTED: outcome={} detail={}",
             outcome, result.detail
@@ -1480,6 +1555,26 @@ fn run_one_connection_inner(
             cgroup_parent: config.workload_cgroup_parent.clone(),
             container: loaded.container.clone(),
             allow_elevated_host: config.allow_elevated_host_execution,
+            // ★ 2026-10-03 10:58 (조각 5c · 계약 §5 실행 순서 3b) — 컨테이너를 만든 직후 · 시작 전에 ID · 런타임 대상을 원장에 커밋한다. 못 적으면 시작하지 않는다.
+            //   원장이 꺼진 구성은 아무것도 하지 않는다(그 경우 기동 판정도 원장을 쓰지 않는다).
+            on_container_created: config.container_runtime.as_ref().map(|runtime| {
+                let handle = config.run_ledger_handle.clone();
+                let attempt_id = grant.attempt_id.clone();
+                let program = runtime.program.clone();
+                let flavor = runtime.flavor;
+                // ★ 2026-10-04 13:20 (조각 5e2a · 계약 v18m) — 재부착 입력: 이 연결에서 검증을 통과한 서명 Grant 바이트(Manifest 포함)와 기록 시각을 3b 와 같은 UPDATE 로.
+                let grant_bytes = grant.encode_to_vec();
+                exec::ContainerCreatedHook::new(move |container_id: &str| {
+                    record_container_created(
+                        handle.as_ref(),
+                        &attempt_id,
+                        &program,
+                        flavor,
+                        container_id,
+                        Some((&grant_bytes, SystemClock.now_unix_ms())),
+                    )
+                })
+            }),
         };
         // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
         //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
@@ -1615,8 +1710,16 @@ fn run_one_connection_inner(
         //   ACK 가 이미 Job 을 RUNNING 으로 옮긴 풀 밖 lane 에서 갱신 한 번 실패가 "안 돈 작업의 FAILED" 가 됐다. 풀 밖 lane 은 갱신 실패가
         //   두 번 실행이 되지 않으므로 전처럼 띄운다(첫 갱신은 스레드가 곧바로). 수신 확인 없이 풀에 붙이는 것은 설정 오류다(런북 §5).
         if will_execute && config.renew_during_execution_ms > 0 && config.require_ack_receipt {
+            let sent_at = clock.now_unix_ms();
             match renew_once_over_new_connection(&config, signing_key, &held_lease, 0, None) {
                 Ok(renewed) => {
+                    // ★ 조각 5c(v18j) — 재부착 근거: 마지막 서명 Lease 와 그때 계산한 끊김 시한.
+                    record_renewal_in_ledger(
+                        &config,
+                        &grant.attempt_id,
+                        &renewed,
+                        renewal_self_stop_at(config.disconnect_stop_margin_ms, &renewed, sent_at),
+                    );
                     let remaining = renewed
                         .expires_at_unix_ms
                         .saturating_sub(clock.now_unix_ms());
@@ -1669,6 +1772,7 @@ fn run_one_connection_inner(
                 run_dir
                     .join(exec::CHECKPOINT_OUT_DIRNAME)
                     .join(progress::PROGRESS_FILENAME),
+                None,
             )
         } else {
             None
@@ -1723,6 +1827,9 @@ fn run_one_connection_inner(
                 if watcher.join().is_err() {
                     println!("DISCONNECT_WATCH_THREAD_PANICKED — 끊김 시한 감시 스레드가 비정상 종료했다");
                 }
+            }
+            if let Some(mailbox) = renewer.mailbox {
+                mailbox.finish(&grant.attempt_id, mailbox::WATCH_JOIN_LIMIT);
             }
         }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
@@ -2405,6 +2512,8 @@ fn verify_renew_result(
         // max_total_duration_seconds 갱신 차단 — 새 lease_id 재발급은 범위 밖이다.
         6 => Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
         8 => Err("RENEW_REFUSED:REVOKED".into()),
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — 서명된 거부다(RENEW_REFUSED 접두) — 갱신 루프가 멈추고 소유자의 "계속" 도 무시한다(지우지는 않는다).
+        9 => Err("RENEW_REFUSED:RUN_UNKNOWN_HELD".into()),
         other => Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
     }
 }
@@ -2540,6 +2649,8 @@ struct RenewDuringExecution {
     /// ★ 2026-09-30 (검수 ss1) — 끊김 시한 감시 스레드. 갱신 스레드와 **따로** 돈다 — 갱신 요청이 응답을 기다리는 동안(연결 · 읽기 시한 10초)
     ///   감시가 멈추면 시한을 넘겨 계속 돌았다. 여유 0(끔)이면 없다.
     watcher: Option<std::thread::JoinHandle<()>>,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실행 중 우편함 감시 스레드(`--use-mailbox`). 갱신 스레드와 따로 실행이 끝날 때까지 돈다.
+    mailbox: Option<mailbox::MailboxWatch>,
 }
 
 /// `renew_during_execution_ms` 간격으로 RENEW 세션을 연다. 0 이면 시작하지 않는다.
@@ -2554,6 +2665,7 @@ struct RenewDuringExecution {
 ///   작업을 스스로 멈춘다(세 겹 중 첫째 — Agent 타이머). 전에는 "정책이 정하지 않았다" 며 멈추지 않았다. 소유자 화면에 연결 상태를 적고,
 ///   소유자가 "계속 돌리기"(부작용 없는 작업만)를 고르면 시한을 넘겨 계속 둔다. Coordinator 가 갱신을 거부하면(다른 노드로 넘어감) "계속" 도
 ///   무시하고 멈춘다. 여유(`disconnect_stop_margin_ms`)가 0 이면 멈추지 않는다(옛 동작). 커널 시한 · 런타임 밖 정지(둘째 · 셋째 겹)는 아직이다.
+#[allow(clippy::too_many_arguments)]
 fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
@@ -2563,6 +2675,8 @@ fn start_renew_during_execution(
     keep_running_allowed: bool,
     // ★ 2026-10-01 — 작업의 진행 보고 파일(`progress` 모듈). 갱신마다 읽어 서명된 갱신 요청에 싣고 소유자 화면에 적는다.
     progress_path: PathBuf,
+    // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18j ②′) — 재부착 회차: 처음 끊김 시한을 원장의 값 이하로 둔다(재기동 시각으로 다시 계산해 늦추지 않는다). 실행 회차는 None.
+    initial_self_stop_at: Option<u64>,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2570,25 +2684,50 @@ fn start_renew_during_execution(
     let panel = config.owner_panel_state.clone();
     let attempt_id = attempt_id.to_string();
     let margin = config.disconnect_stop_margin_ms;
-    let self_stop_enabled = margin > 0;
-    if self_stop_enabled {
+    // ★ 2026-10-02 (관문 5 ⑦ 계획 v3 §2 공통 고침) — 여유 0 은 "시간으로는 멈추지 않는다"(옛 동작)일 뿐이다. 전에는 감시 자체를 걸지 않아,
+    //   Coordinator 가 **서명해 거부**(넘어감 · 폐기 · 대체)해도 작업이 계속 돌았다. 이제 감시는 늘 걸고 시간 시한만 "없음"(u64::MAX)으로 둔다 —
+    //   서명된 거부는 renew_refused 가 시한을 지금으로 당겨 같은 정지 경로를 탄다(DISCONNECT_STOPPED — 소유자 되찾음이 아니다).
+    let time_limits_enabled = margin > 0;
+    let self_stop_time = move |issued: u64, expires: u64, sent: u64| {
+        if time_limits_enabled {
+            owner_panel::disconnect_self_stop_at(issued, expires, sent, margin)
+        } else {
+            u64::MAX
+        }
+    };
+    let near_finish_time = move |lease: &pb::Lease, sent: u64| {
+        if time_limits_enabled {
+            owner_panel::near_finish_stop_at(
+                lease.issued_at_unix_ms,
+                lease.expires_at_unix_ms,
+                sent,
+                margin,
+                lease.reassignment_grace_ms,
+                lease.max_total_duration_seconds,
+            )
+        } else {
+            u64::MAX
+        }
+    };
+    {
         let now = SystemClock.now_unix_ms();
+        let cap = initial_self_stop_at.unwrap_or(u64::MAX);
         panel.watch_connection(
             &attempt_id,
+            self_stop_time(
+                held_lease.issued_at_unix_ms,
+                held_lease.expires_at_unix_ms,
+                now,
+            )
+            .min(cap),
+            // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
+            near_finish_time(held_lease, now).min(cap),
+            // ★ 검수 m0r ① — Lease 자체의 시한(여유 없이). 일시정지 풀기가 끊김 시한과 따로 본다.
             owner_panel::disconnect_self_stop_at(
                 held_lease.issued_at_unix_ms,
                 held_lease.expires_at_unix_ms,
                 now,
-                margin,
-            ),
-            // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
-            owner_panel::near_finish_stop_at(
-                held_lease.issued_at_unix_ms,
-                held_lease.expires_at_unix_ms,
-                now,
-                margin,
-                held_lease.reassignment_grace_ms,
-                held_lease.max_total_duration_seconds,
+                0,
             ),
             keep_running_allowed,
             now,
@@ -2602,9 +2741,6 @@ fn start_renew_during_execution(
         let mut last_failure: Option<String> = None;
         let mut holding = false;
         move || {
-            if !self_stop_enabled {
-                return;
-            }
             let outcome = panel.self_stop_if_due(&attempt_id, SystemClock.now_unix_ms());
             // ★ 2026-10-01 (판단표 ④) — "곧 끝남" 으로 끊김 시한을 넘겨 계속 두기 시작할 때 · 그만둘 때 한 번씩 찍는다.
             match (panel.near_finish_hold(&attempt_id), holding) {
@@ -2637,7 +2773,7 @@ fn start_renew_during_execution(
     };
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_stop = std::sync::Arc::clone(&stop);
-    let watcher = if self_stop_enabled {
+    let watcher = {
         let watcher_stop = std::sync::Arc::clone(&stop);
         Some(std::thread::spawn(move || {
             while !watcher_stop.load(std::sync::atomic::Ordering::SeqCst) {
@@ -2645,9 +2781,18 @@ fn start_renew_during_execution(
                 std::thread::sleep(Duration::from_millis(50));
             }
         }))
-    } else {
-        None
     };
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실행 중에도 묻는다. 갱신이 거부 · 로컬 만료로 끝나도 이 스레드는 실행이 끝날 때까지 간다 —
+    //   갱신을 그만둔 노드가 "그 시도는 폐기됐다" 를 들을 수 있는 유일한 길이다.
+    let mailbox = config.use_mailbox.then(|| {
+        mailbox::spawn_watch_during_execution(
+            config.clone(),
+            signing_key.clone(),
+            attempt_id.clone(),
+            Duration::from_millis(config.renew_during_execution_ms),
+            std::sync::Arc::clone(&stop),
+        )
+    });
     let config = config.clone();
     let key = signing_key.clone();
     let mut lease = held_lease.clone();
@@ -2758,26 +2903,25 @@ fn start_renew_during_execution(
                         "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
                         renewed.lease_id, renewed.fence_epoch, renewed.expires_at_unix_ms
                     );
-                    if self_stop_enabled {
-                        panel.renew_succeeded(
-                            &attempt_id,
-                            owner_panel::disconnect_self_stop_at(
-                                renewed.issued_at_unix_ms,
-                                renewed.expires_at_unix_ms,
-                                sent_at,
-                                margin,
-                            ),
-                            owner_panel::near_finish_stop_at(
-                                renewed.issued_at_unix_ms,
-                                renewed.expires_at_unix_ms,
-                                sent_at,
-                                margin,
-                                renewed.reassignment_grace_ms,
-                                renewed.max_total_duration_seconds,
-                            ),
-                            SystemClock.now_unix_ms(),
-                        );
-                    }
+                    let stop_at = self_stop_time(
+                        renewed.issued_at_unix_ms,
+                        renewed.expires_at_unix_ms,
+                        sent_at,
+                    );
+                    // ★ 조각 5c(v18j) — 재부착 근거: 마지막 서명 Lease 와 이 갱신 때 계산한 끊김 시한(화면 감시와 같은 값).
+                    record_renewal_in_ledger(&config, &attempt_id, &renewed, stop_at);
+                    panel.renew_succeeded(
+                        &attempt_id,
+                        stop_at,
+                        near_finish_time(&renewed, sent_at),
+                        owner_panel::disconnect_self_stop_at(
+                            renewed.issued_at_unix_ms,
+                            renewed.expires_at_unix_ms,
+                            sent_at,
+                            0,
+                        ),
+                        SystemClock.now_unix_ms(),
+                    );
                     lease = renewed;
                 }
                 Err(error)
@@ -2789,7 +2933,7 @@ fn start_renew_during_execution(
                     //   소유자의 "계속" 도 무시하고 곧바로 멈춘다. 그 밖(Agent 가 스스로 본 만료 `LOCAL_EXPIRED` · 결과 검증 실패 `RENEW_REJECTED`)은
                     //   Coordinator 의 결정을 안 것이 아니다 — 끊김으로 다룬다(시한 · 소유자 선택대로). 처음 구현은 둘을 같이 거부로 다뤄,
                     //   소유자가 "계속" 을 고른 PURE 작업이 Lease 가 끝나는 순간 멈췄다(실제 프로세스 시험이 잡았다).
-                    if self_stop_enabled {
+                    {
                         // ★ 검수 an2 — 스스로 본 만료라도 서명된 Lease 의 누적 상한에 닿은 것이면 서명된 거부(MAX_DURATION_EXCEEDED)와 같다.
                         let max_duration_reached = error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED")
                             && lease_reached_max_total_duration(&lease, SystemClock.now_unix_ms());
@@ -2811,9 +2955,7 @@ fn start_renew_during_execution(
                 }
                 Err(error) => {
                     println!("RENEW_SESSION_FAILED round={round} detail={error}");
-                    if self_stop_enabled {
-                        panel.renew_failed(&attempt_id);
-                    }
+                    panel.renew_failed(&attempt_id);
                 }
             }
             round += 1;
@@ -2826,6 +2968,7 @@ fn start_renew_during_execution(
         stop,
         handle,
         watcher,
+        mailbox,
     })
 }
 
@@ -3129,6 +3272,155 @@ fn report_session_once(
     };
     verify_report_ack(&ack, &hello.nonce, report, config)?;
     Ok(ack)
+}
+
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §1 · §5 "보내기" · "ACK 대조") — 원장의 서명된 알림 하나를 REPORT 세션으로 보내고 서명된 ACK 를 검증한다.
+///   한 연결에 Hello · 알림 · ACK 하나씩(보고와 같다). 바이트는 원장에 적힌 그대로 보낸다(재전송도 같은 바이트 — 중앙의 멱등 키).
+fn run_notice_session_once(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    stored: &run_ledger::StoredNotice,
+) -> Result<pb::AttemptRunNoticeAck, String> {
+    let notice = pb::AttemptRunNotice::decode(stored.notice_bytes.as_slice())
+        .map_err(|e| format!("RUN_NOTICE: 원장의 알림 바이트를 읽지 못했다: {e}"))?;
+    let clock = SystemClock;
+    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_REPORT,
+        session_id: config.session_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        connection_attempt: 0,
+        issued_at_unix_ms: clock.now_unix_ms(),
+        nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    hello.node_signature = sign(signing_key, &hello).to_vec();
+    let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+        .map_err(|e| format!("Hello(REPORT) 프레임 인코딩 실패: {e}"))?;
+    let notice_frame = write_frame(FrameType::AttemptRunNotice, &stored.notice_bytes)
+        .map_err(|e| format!("AttemptRunNotice 프레임 인코딩 실패: {e}"))?;
+    for (frame, what) in [(hello_frame, "Hello(REPORT)"), (notice_frame, "AttemptRunNotice")] {
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("{what} 전송 실패: {e}"))?;
+    }
+    stream.flush().map_err(|e| e.to_string())?;
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(
+        config.coordinator_device_id.clone(),
+        config.coordinator_verifying_key,
+    );
+    let mut replay = InMemoryReplayGuard::new();
+    let message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&keys),
+        &mut replay,
+        &clock,
+    )
+    .map_err(|e| match e {
+        FramingError::Truncated | FramingError::Io(_) => {
+            format!("AttemptRunNoticeAck 를 받지 못했다(연결 끊김 · 소켓 시한 · 거부): {e}")
+        }
+        other => format!("RUN_NOTICE_ACK_REJECTED: ACK 를 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+    })?;
+    let ack = match message {
+        IngressMessage::AttemptRunNoticeAck(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("RUN_NOTICE_ACK_REJECTED: replay 검사 실패: {e:?}"))?
+            .clone(),
+        _ => return Err("RUN_NOTICE_ACK_REJECTED: 실행 알림 ACK 가 아닌 프레임이다".into()),
+    };
+    verify_run_notice_ack(&ack, &hello.nonce, &notice, stored, config)?;
+    Ok(ack)
+}
+
+/// ACK 의 상관관계 — 서명 검증 **뒤에** 본다. notice_hash 는 원장에 적힌 값(보낸 바이트의 sig_input 해시)과 대조한다.
+fn verify_run_notice_ack(
+    ack: &pb::AttemptRunNoticeAck,
+    session_nonce: &[u8],
+    notice: &pb::AttemptRunNotice,
+    stored: &run_ledger::StoredNotice,
+    config: &AgentConfig,
+) -> Result<(), String> {
+    gputeer_protocol::attempt_run_notice_rules::validate_attempt_run_notice_ack(ack)
+        .map_err(|e| format!("RUN_NOTICE_ACK_REJECTED: 조합 규칙 — {e:?}"))?;
+    if ack.session_nonce != session_nonce {
+        return Err("RUN_NOTICE_ACK_REJECTED: session_nonce 가 이 세션의 Hello 와 다르다 — 다른 세션의 응답이다".into());
+    }
+    if ack.coordinator_id != config.coordinator_device_id {
+        return Err(format!(
+            "RUN_NOTICE_ACK_REJECTED: coordinator_id 불일치 — 기대값 {}",
+            config.coordinator_device_id
+        ));
+    }
+    if (
+        ack.job_id.as_str(),
+        ack.attempt_id.as_str(),
+        ack.node_id.as_str(),
+        ack.fence_epoch,
+        ack.kind,
+        ack.sequence,
+    ) != (
+        notice.job_id.as_str(),
+        notice.attempt_id.as_str(),
+        notice.node_id.as_str(),
+        notice.fence_epoch,
+        notice.kind,
+        notice.sequence,
+    ) {
+        return Err("RUN_NOTICE_ACK_REJECTED: job · attempt · node · 세대 · 종류 · 번호가 보낸 알림과 다르다".into());
+    }
+    match ack.notice_hash.as_ref() {
+        Some(digest) if digest.algo == 1 && digest.value == stored.notice_hash => Ok(()),
+        _ => Err("RUN_NOTICE_ACK_REJECTED: notice_hash 가 보낸 알림의 BLAKE3(sig_input) 과 다르다".into()),
+    }
+}
+
+/// ★ 조각 5f — 회차 시작: 원장의 보내지 않은 알림을 시도 · 번호 순으로 보내고 검증된 ACK 를 원장에 대조해 적는다(ACKED 면 차단이 풀린다).
+///   하나라도 실패하면 거기서 멈춘다(다음 회차에 다시 — 번호 순서를 지킨다). 그 뒤에도 막힌 행이 남으면 새 작업을 받지 않는다.
+fn flush_run_notices_then_gate(config: &AgentConfig, signing_key: &SigningKey) -> Result<(), String> {
+    let unsent = match with_run_ledger(config, |ledger| ledger.unsent_notices()) {
+        Some(result) => result?,
+        None => return Ok(()),
+    };
+    for stored in &unsent {
+        match run_notice_session_once(config, signing_key, stored) {
+            Ok(ack) => {
+                let outcome = with_run_ledger(config, |ledger| {
+                    ledger.record_ack(&stored.attempt_id, stored.sequence, stored.kind, &stored.notice_hash)
+                })
+                .expect("원장이 열려 있다 — 위에서 읽었다")?;
+                println!(
+                    "RUN_NOTICE_ACKED attempt_id={} sequence={} kind={} created={} outcome={outcome:?}",
+                    stored.attempt_id,
+                    stored.sequence,
+                    stored.kind.as_str(),
+                    ack.created
+                );
+            }
+            Err(error) => {
+                println!(
+                    "RUN_NOTICE_NOT_DELIVERED attempt_id={} sequence={} detail={error} — 다음 회차에 같은 바이트로 다시 보낸다",
+                    stored.attempt_id, stored.sequence
+                );
+                break;
+            }
+        }
+    }
+    match with_run_ledger(config, |ledger| ledger.blocks_new_work()) {
+        Some(Ok(false)) | None => Ok(()),
+        Some(Ok(true)) => Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(OPEN · STOP_PENDING · LOCAL_BLOCKED)가 남아 새 작업을 받지 않는다 — 알림은 보냈다(ACK 를 기다리거나 \
+                               해제 명령이 필요하다)".into()),
+        Some(Err(error)) => Err(error),
+    }
 }
 
 /// 받았다 응답의 상관관계 — 서명 검증 **뒤에** 본다.
@@ -3930,9 +4222,14 @@ fn open_run_ledger_at_startup(
     }
     let mut ledger = run_ledger::open_for_agent(&paths)?;
     resolve_active_ledger_rows(settled, &paths, &mut ledger)?;
+    // ★ 2026-10-03 11:51 (조각 5f) — 알림을 쓰는 Agent 는 막힌 행(OPEN · STOP_PENDING)이 있어도 여기서 거부하지 않는다 — 알림을 보내야 차단이 풀린다.
+    //   새 작업은 `flush_run_notices_then_gate` 가 알림을 보낸 **뒤** 다시 보고 거부한다. LOCAL_BLOCKED(알림 꺼짐 때의 행)도 같이 막힌다.
+    if settled.send_run_notice {
+        return Ok(Some(ledger));
+    }
     if ledger.blocks_new_work()? {
-        return Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(LOCAL_BLOCKED)가 있다 — 새 작업을 받지 않는다. 컨테이너 · 작업 폴더를 확인한 뒤 \
-                    `gputeer container-incidents --checkpoint-root <루트> --clear <이름>` 으로 해제한다".into());
+        return Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(LOCAL_BLOCKED · OPEN · STOP_PENDING)가 있다 — 새 작업을 받지 않는다. 컨테이너 · 작업 폴더를 확인한 뒤 \
+                    `gputeer container-incidents --checkpoint-root <루트> --clear <이름>` 으로 해제한다(STOP_PENDING 은 보낸 정지 확인의 ACK 를 기다린다)".into());
     }
     Ok(Some(ledger))
 }
@@ -3975,6 +4272,12 @@ fn resolve_active_ledger_rows(
                     println!("RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=CLOSED reason=report_and_removed");
                     continue;
                 }
+                // ★ 2026-10-03 11:15 (조각 5d · 계약 §5 기동 관문 · §4) — 알림을 쓰면 보고 없는 행은 §4 자동 증거(지우지 않는 변형)로 판정한다.
+                //   알림 꺼짐이면 아래 그대로 LOCAL_BLOCKED(계약 b14 ②). 보고는 있는데 지움 확인이 없는 행도 그대로다(종료는 관측했다 — 불명이 아니다).
+                if settled.send_run_notice && !report {
+                    resolve_unreported_container_row(settled, &signing_key, ledger, &row, true)?;
+                    continue;
+                }
                 let reason = if report {
                     "report_without_removal"
                 } else {
@@ -4007,6 +4310,408 @@ fn resolve_active_ledger_rows(
                     "RUN_LEDGER: legacy 행이 ACTIVE 다({id}) — 원장이 바뀌었다"
                 ))
             }
+        }
+    }
+    Ok(())
+}
+
+/// ★ 2026-10-03 11:15 (조각 5d · 계약 §5 기동 관문 셋째 · 넷째 줄 · §4) — 알림을 쓰는 Agent 의 기동: 시작했고 보고가 없는 컨테이너 행.
+///
+/// ```text
+/// 자동 증거가 섰다(확인한 ID 의 컨테이너가 고정한 대상에서 최종적으로 없다)   → 한 원장 트랜잭션: STOP_CONFIRMED 알림 + STOP_PENDING
+///                                                                    (RUN_UNKNOWN 없이 — 중앙의 "STOP 먼저 옴" 행)
+/// 증거 못 섬(남아 있음 · 런타임 무응답 · ID · 대상 없음 · 신원 다름)          → 한 원장 트랜잭션: RUN_UNKNOWN 알림 + OPEN — 다음 기동이 다시 보거나
+///                                                                    소유자 해제 명령(§4)
+/// ```
+/// 지우지 않는다(v18f). 돌고 있는 컨테이너의 재부착(B′ · 조각 5e)은 이 판정 **앞**에 선다 — 그 전까지 돌고 있으면 "있음" 이라 OPEN 이다(보수).
+/// ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18j · v18n · v18o · v18p) — 기동 정리 뒤 남은 ACTIVE 컨테이너 행(발견 단계의 재부착 후보)을 다시 판정하고 다시 붙는다.
+///   한 행씩 끝까지 간다(작업이 끝날 때까지 이 함수가 돌아오지 않는다). 승인하지 못한 행은 5e1 경로로 정리한다.
+/// ★ 조각 5e2d — 시험 진입점. 재부착 회차는 기동에서만 불린다(배포 바이너리는 알림 스위치가 기동을 거부해 닿지 않는다 — 활성화 관문).
+#[doc(hidden)]
+pub fn reattach_active_rows_for_test(config: &AgentConfig, signing_key: &SigningKey) -> Result<(), String> {
+    // 기동(`run`)이 원장을 연 직후 거는 정지 결정 고리를 시험에서도 건다.
+    if let Some(handle) = config.run_ledger_handle.clone() {
+        config
+            .owner_panel_state
+            .set_stop_recorder(stop_decision_recorder(handle, &config.checkpoint_root, &config.agent_device_id));
+    }
+    reattach_active_rows(config, signing_key)
+}
+
+fn reattach_active_rows(config: &AgentConfig, signing_key: &SigningKey) -> Result<(), String> {
+    let Some(handle) = config.run_ledger_handle.clone() else {
+        return Ok(());
+    };
+    let rows: Vec<run_ledger::AttemptRow> = handle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .rows()?
+        .into_iter()
+        .filter(|row| row.state == run_ledger::RowState::Active && row.executor == run_ledger::Executor::Container)
+        .collect();
+    for row in rows {
+        let Some(program) = row.runtime_program.clone() else {
+            let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+            resolve_unreported_container_row(config, signing_key, &mut ledger, &row, false)?;
+            continue;
+        };
+        let name = row
+            .container_name
+            .clone()
+            .unwrap_or_else(|| container::derive_container_name(&row.attempt_id));
+        let incident_open =
+            container::incident_recorded_for(&container::incident_dir_for(&config.checkpoint_root), &name);
+        // 승인 — 발견 뒤 바뀌었을 수 있으니 같은 판정을 다시 한다(대상 신원 · running · 시한 · 정지 결정 · 사건 표식)
+        let verdict = run_evidence::evaluate_reattach(
+            &row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(&program),
+                salvage_dir: None,
+            },
+            incident_open,
+            SystemClock.now_unix_ms(),
+        );
+        let reattached = match verdict {
+            run_evidence::ReattachVerdict::Candidate(inputs) => {
+                run_reattach_round(config, signing_key, &row, std::path::Path::new(&program), *inputs)?
+            }
+            run_evidence::ReattachVerdict::NotCandidate { why, stop_allowed } => {
+                println!(
+                    "RUN_LEDGER_REATTACH_NOT_APPROVED attempt_id={} stop_allowed={stop_allowed} detail={why}",
+                    row.attempt_id
+                );
+                false
+            }
+        };
+        if !reattached {
+            let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(current) = ledger.row(&row.attempt_id)? {
+                if current.state == run_ledger::RowState::Active {
+                    resolve_unreported_container_row(config, signing_key, &mut ledger, &current, false)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// ★ 2026-10-04 13:59 (조각 5e2d) — 재부착 회차 하나. `true` 면 다시 붙어 종료까지 보고 보고를 보관했다(또는 그 행을 원장이 이미 정리했다).
+///   `false` 면 재부착하지 않았다 — 갱신이 한 번도 성공하지 않았거나(서명된 거부 · 끊김 · 정지 결정) 입력을 다시 세우지 못했다.
+///   그때 컨테이너는 지우지 않고(필요하면 멈춘 채) 원장은 ACTIVE 그대로다 — 부르는 쪽이 5e1 경로(증거 판정 · OPEN)로 정리한다.
+fn run_reattach_round(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    row: &run_ledger::AttemptRow,
+    program: &std::path::Path,
+    inputs: run_evidence::ReattachInputs,
+) -> Result<bool, String> {
+    let attempt_id = row.attempt_id.clone();
+    let not_reattached = |why: String| {
+        println!("RUN_LEDGER_REATTACH_ABANDONED attempt_id={attempt_id} detail={why} — 재부착하지 않는다(멈추기 · 증거 판정으로)");
+        Ok(false)
+    };
+    // 명세를 다시 세운다 — 처음 검증한 시각(원장의 시작 시각)으로 같은 제출자 키 검증을 되풀이한다(짧은 수명은 그때 기준).
+    let workload = match verify_nested_manifest(
+        &inputs.grant,
+        config,
+        inputs.started_at_unix_ms,
+        &mut InMemoryReplayGuard::new(),
+    ) {
+        Ok(Some(workload)) => workload,
+        Ok(None) => return not_reattached("저장된 Grant 에 Manifest 가 없다".into()),
+        Err(why) => return not_reattached(format!("Manifest 재검증 실패: {why}")),
+    };
+    // 조건 ⑥ — 시작 체크포인트 마커를 다시 쓴다(기동 GC 가 지웠을 수 있다 · write_once 멱등). 실행 폴더(GC 밖)가 있어야 한다.
+    let job_id = inputs.last_lease.job_id.clone();
+    let checkpoint_id = match record_start_checkpoint(&config.checkpoint_root, &job_id, &attempt_id, &inputs.grant.grant_id) {
+        Ok(id) => id,
+        Err(why) => return not_reattached(format!("시작 체크포인트 마커를 다시 쓰지 못했다: {why}")),
+    };
+    let run_dir = workload_run_root(&config.checkpoint_root)?.join(&checkpoint_id);
+    if !run_dir.is_dir() {
+        return not_reattached(format!("실행 폴더가 없다({})", run_dir.display()));
+    }
+    // 고정 대상 손잡이를 패널에 건다 — 소유자의 즉시 정지가 먼저 된다(v18j ①). "계속 돌리기" 선택은 복원하지 않는다(Auto).
+    let globals = inputs.endpoint.global_args();
+    let stopper = container::ContainerStopper::pinned(program.to_path_buf(), globals.clone(), inputs.container_id.clone());
+    config.owner_panel_state.register(owner_panel::RunningWorkload {
+        job_id: job_id.clone(),
+        attempt_id: attempt_id.clone(),
+        submitter_device_id: workload.submitter_device_id.clone(),
+        started_at_unix_ms: inputs.started_at_unix_ms,
+        entrypoint: workload.spec.entrypoint.clone(),
+        last_checkpoint_at_unix_ms: None,
+        stopper: std::sync::Arc::new(exec::WorkloadStopper::for_pinned_container(stopper.clone())),
+    });
+    println!(
+        "RUN_LEDGER_REATTACH_WATCH attempt_id={attempt_id} container_id={} self_stop_at_unix_ms={} — 소유자 화면에 다시 걸었다(\"계속 돌리기\" 선택은 초기화됐다)",
+        inputs.container_id, inputs.self_stop_at_unix_ms
+    );
+    // 시한 감시(원장 값 이하) · 우편함 · 갱신 — 첫 갱신은 곧바로(v18j ②′ ③ ④). 서명된 거부 · 시한 · 우편함 · 소유자 정지는 모두 정지 결정을 먼저 적는다(5e2a).
+    let keep_running_allowed = workload.side_effect_class == pb::SideEffectClass::Pure as i32
+        || workload.side_effect_class == pb::SideEffectClass::Idempotent as i32;
+    let renewer = start_renew_during_execution(
+        config,
+        signing_key,
+        &inputs.last_lease,
+        true,
+        &attempt_id,
+        keep_running_allowed,
+        run_dir.join(exec::CHECKPOINT_OUT_DIRNAME).join(progress::PROGRESS_FILENAME),
+        Some(inputs.self_stop_at_unix_ms),
+    );
+    // 감시 — 고정 대상에서 끝날 때까지(5e2b). 종료를 정지 손잡이와 나눈다(소유자 정지 판정 · 결함 525).
+    let exit = container::watch_pinned_exit(program, &globals, &inputs.container_id);
+    if let Ok((code, oom)) = exit {
+        stopper.note_observed_exit(code, oom);
+    }
+    let finished_at = SystemClock.now_unix_ms();
+    let mut held_lease = inputs.last_lease.clone();
+    if let Some(renewer) = renewer {
+        renewer.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        match renewer.handle.join() {
+            Ok(latest) => held_lease = latest,
+            Err(_) => println!("RENEW_SESSION_THREAD_PANICKED attempt_id={attempt_id} — 재부착 회차의 갱신 스레드가 비정상 종료했다(갱신 성공으로 세지 않는다)"),
+        }
+        if let Some(watcher) = renewer.watcher {
+            if watcher.join().is_err() {
+                println!("DISCONNECT_WATCH_THREAD_PANICKED attempt_id={attempt_id} — 재부착 회차의 끊김 시한 감시 스레드가 비정상 종료했다");
+            }
+        }
+        if let Some(mailbox) = renewer.mailbox {
+            mailbox.finish(&attempt_id, mailbox::WATCH_JOIN_LIMIT);
+        }
+    }
+    let stopped_by_owner = config.owner_panel_state.stopped_by_owner(&attempt_id);
+    let stopped_for_disconnect = config.owner_panel_state.stopped_for_disconnect(&attempt_id);
+    config.owner_panel_state.unregister(&attempt_id);
+    // 갱신이 한 번이라도 성공했는가 — 서명된 갱신 성공이 재부착의 조건이다(v18j ④). 실패 · 거부 뒤의 정지는 재부착이 아니다(보고 없이 증거 판정으로).
+    let renewed_once = held_lease != inputs.last_lease;
+    let (code, oom) = match exit {
+        Ok(observed) if renewed_once => observed,
+        Ok(_) => return not_reattached("서명된 갱신 성공 없이 멈췄다(거부 · 끊김 · 정지 결정) — 재부착이 아니다".into()),
+        Err(why) => return not_reattached(format!("종료를 관측하지 못했다(아직 돌 수 있다 — 지우지 않는다): {why}")),
+    };
+    println!("RUN_LEDGER_REATTACHED_EXIT attempt_id={attempt_id} exit_code={code} oom={oom}");
+    // 끝 처리 — 지금 실행 회차와 같은 순서(v18p ④′): 로그 고정 회수 → 고정 삭제 · 부재 확인 → 결과를 원장에 먼저 → 보고 보관 → CLOSED.
+    let stdout = run_dir.join(exec::STDOUT_FILENAME);
+    let stderr = run_dir.join(exec::STDERR_FILENAME);
+    let logs_complete = container::save_logs_pinned(program, &globals, &inputs.container_id, &stdout, &stderr).is_ok();
+    let removed = logs_complete
+        && container::runtime_target::pinned_remove(program, &inputs.endpoint, &inputs.container_id).is_ok()
+        && matches!(
+            container::runtime_target::pinned_lookup(
+                program,
+                &inputs.endpoint,
+                &container::runtime_target::Lookup::Id(&inputs.container_id),
+            ),
+            Ok(container::runtime_target::Presence::Absent)
+        );
+    if let Some(Err(error)) = with_run_ledger(config, |ledger| {
+        ledger.record_container_exit(
+            &attempt_id,
+            Some(stopped_by_owner || stopped_for_disconnect),
+            Some(logs_complete),
+            Some(!removed),
+            removed,
+            "container_not_confirmed_removed",
+        )
+    }) {
+        return Err(run_ledger_fatal(
+            &attempt_id,
+            format!("재부착 회차의 종료 뒤 원장에 처리 결과를 적지 못했다 — 보고를 보관하지 않는다: {error}"),
+        ));
+    }
+    // v18o ④ — 같은 시도의 보고가 보관함에 이미 있으면 새 보고를 만들지 않는다(사람이 본다 — 행은 위 결과대로 남는다)
+    if config.report_over_session {
+        let outbox = report_outbox_dir(config)?;
+        if accepted_outbox_report_exists(config, signing_key, &outbox, row)? {
+            println!("RUN_LEDGER_REATTACH_REPORT_EXISTS attempt_id={attempt_id} — 같은 시도의 보고가 이미 보관돼 있어 새 보고를 만들지 않는다");
+            return Ok(true);
+        }
+    }
+    let outcome = exec::ExecutionOutcome {
+        exit: exec::ExitObserved::Code(u32::try_from(code).unwrap_or(u32::MAX)),
+        commit_limit_bytes: config.workload_commit_limit_bytes,
+        peak_commit_bytes: None,
+        memory_observation_error: None,
+        outputs_incomplete: (!logs_complete).then(|| "재부착 회차에서 로그를 끝까지 받지 못했다".to_string()),
+        container_needs_human: !removed,
+    };
+    let finalization_failure = match finalize_workload_outputs(
+        &run_dir,
+        &workload.spec,
+        &outcome,
+        logs_complete,
+        &config.checkpoint_root,
+        &checkpoint_id,
+        &held_lease,
+        &attempt_id,
+    ) {
+        Ok(_) => None,
+        Err((stage, detail)) => {
+            println!("RUN_LEDGER_REATTACH_FINALIZE_FAILED attempt_id={attempt_id} detail={detail}");
+            Some(stage)
+        }
+    };
+    let observed = crate::report::TerminalObservation {
+        job_id: held_lease.job_id.clone(),
+        attempt_id: attempt_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        fence_epoch: held_lease.fence_epoch,
+        exit_code: Some(u32::try_from(code).unwrap_or(u32::MAX)),
+        finalization_failure,
+        started_at_unix_ms: inputs.started_at_unix_ms,
+        finished_at_unix_ms: finished_at,
+        issued_at_unix_ms: 0,
+        stopped_by_owner,
+        stopped_for_disconnect,
+    };
+    if !config.report_over_session {
+        return Ok(true);
+    }
+    let (report, path) = outbox_terminal_report(config, signing_key, &SystemClock, &observed)?;
+    if removed {
+        if let Some(Err(error)) = with_run_ledger(config, |ledger| match ledger.row(&attempt_id)? {
+            Some(current) if current.state == run_ledger::RowState::Active => {
+                ledger.close_active(&attempt_id, run_ledger::CloseReason::ReportPersisted)
+            }
+            _ => Ok(()),
+        }) {
+            return Err(run_ledger_fatal(
+                &attempt_id,
+                format!("재부착 회차의 보고를 보관한 뒤 원장 CLOSED 를 적지 못했다: {error}"),
+            ));
+        }
+    }
+    if let Err(error) = deliver_outboxed_report(config, signing_key, &report, &path) {
+        println!("RUN_LEDGER_REATTACH_REPORT_PENDING attempt_id={attempt_id} detail={error} — 보관함에 남아 다음 기동이 다시 보낸다");
+    }
+    println!("RUN_LEDGER_REATTACHED_DONE attempt_id={attempt_id} removed={removed}");
+    Ok(true)
+}
+
+fn resolve_unreported_container_row(
+    settled: &AgentConfig,
+    signing_key: &SigningKey,
+    ledger: &mut run_ledger::RunLedger,
+    row: &run_ledger::AttemptRow,
+    // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18o ⑤) — 기동의 발견 단계면 true: 재부착 후보는 **아무것도 바꾸지 않고** ACTIVE 로 둔다(승인 · 회차는 기동 GC ·
+    //   패널 뒤 `reattach_active_rows`). 그 승인이 거절한 행을 다시 판정할 때는 false(후보로 미루지 않고 아래 5e1 경로 — 멈추기 · 증거).
+    allow_defer: bool,
+) -> Result<(), String> {
+    let id = &row.attempt_id;
+    if let (true, Some(program)) = (allow_defer, row.runtime_program.as_deref()) {
+        let name = row
+            .container_name
+            .clone()
+            .unwrap_or_else(|| container::derive_container_name(id));
+        let incident_open =
+            container::incident_recorded_for(&container::incident_dir_for(&settled.checkpoint_root), &name);
+        let verdict = run_evidence::evaluate_reattach(
+            row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+                salvage_dir: None,
+            },
+            incident_open,
+            SystemClock.now_unix_ms(),
+        );
+        match verdict {
+            run_evidence::ReattachVerdict::Candidate(_) => {
+                println!(
+                    "RUN_LEDGER_REATTACH_CANDIDATE attempt_id={id} — 재기동 때 돌고 있고 재부착 조건을 모두 갖췄다 · 기동 정리 뒤 갱신 확인으로 다시 붙는다(그때까지 ACTIVE)"
+                );
+                return Ok(());
+            }
+            run_evidence::ReattachVerdict::NotCandidate { why, stop_allowed } => println!(
+                "RUN_LEDGER_REATTACH_REFUSED attempt_id={id} stop_allowed={stop_allowed} detail={why}"
+            ),
+        }
+    }
+    let owner = settled
+        .container_runtime
+        .as_ref()
+        .map(|runtime| runtime.owner.as_str())
+        .unwrap_or("");
+    // ★ 2026-10-03 11:37 (조각 5e1) — 확인한 ID 의 컨테이너가 아직 돌고 있으면 감시 없이 두지 않고 먼저 멈춘다(지우지 않는다). 재부착(B′)은 조각 5e2.
+    //   멈췄어도 컨테이너는 남는다 — "이미 없음" 이 아니므로 아래 증거 판정 없이 OPEN 이다.
+    let stopped_at_restart = row.runtime_program.as_deref().map(|program| {
+        run_evidence::stop_if_running_at_restart(
+            row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+                salvage_dir: None,
+            },
+        )
+    });
+    let evidence = match (stopped_at_restart, row.runtime_program.as_deref()) {
+        (Some(run_evidence::RunningAtRestart::StoppedWhileRunning), _) => {
+            run_evidence::AutoEvidence::NotEstablished {
+                why: "재기동 때 돌고 있어 멈췄다(재부착은 아직 없다) — 컨테이너는 남아 있다".into(),
+                id_recorded: true,
+            }
+        }
+        (Some(run_evidence::RunningAtRestart::StopFailed(why)), _) => {
+            println!("RUN_LEDGER_RESTART_STOP_FAILED attempt_id={id} detail={why} — 재기동 때 돌고 있는데 멈추지 못했다");
+            run_evidence::AutoEvidence::NotEstablished {
+                why: format!("재부착 정지 실패({why})"),
+                id_recorded: true,
+            }
+        }
+        (_, Some(program)) => run_evidence::startup_absence_evidence(
+            row,
+            owner,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+                // 기동은 로그를 건지지도 지우지도 않는다(v18f) — 보존 폴더를 주지 않는다.
+                salvage_dir: None,
+            },
+        ),
+        (_, None) => run_evidence::AutoEvidence::NotEstablished {
+            why: "원장에 런타임 실행 파일이 없다".into(),
+            id_recorded: row.container_id.is_some(),
+        },
+    };
+    let now = SystemClock.now_unix_ms();
+    let sequence = ledger.next_sequence(id)?;
+    match evidence {
+        run_evidence::AutoEvidence::Absent => {
+            let notice = run_evidence::build_notice(
+                signing_key,
+                row,
+                run_evidence::NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed),
+                sequence,
+                now,
+                now,
+            )?;
+            ledger.stop_pending_with_stop(id, "container_absent_confirmed", &notice)?;
+            println!(
+                "RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=STOP_PENDING reason=container_absent_confirmed sequence={sequence}"
+            );
+        }
+        run_evidence::AutoEvidence::NotEstablished { why, id_recorded } => {
+            // ID 를 적기 전에 죽었으면 기동 요청이 풀리지 않은 것(늦은 생성을 배제할 수 없다) · 적었으면 종료를 관측하지 못한 것.
+            let (origin, reason) = if id_recorded {
+                (pb::RunUnknownOrigin::Running, pb::RunUnknownReason::ExitUnobserved)
+            } else {
+                (
+                    pb::RunUnknownOrigin::Starting,
+                    pb::RunUnknownReason::StartRequestUnresolved,
+                )
+            };
+            let notice = run_evidence::build_notice(
+                signing_key,
+                row,
+                run_evidence::NoticeShape::RunUnknown { origin, reason },
+                sequence,
+                now,
+                now,
+            )?;
+            ledger.open_with_run_unknown(id, "run_unknown_at_restart", &notice)?;
+            println!(
+                "RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=OPEN reason=run_unknown sequence={sequence} detail={why}"
+            );
         }
     }
     Ok(())
@@ -4073,6 +4778,123 @@ fn with_run_ledger<T>(
         let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
         step(&mut ledger)
     })
+}
+
+/// ★ 2026-10-03 10:58 (조각 5c · 계약 §5 실행 순서 3b) — 만든 컨테이너의 ID · 런타임 대상을 원장에 적는다. 대상을 고정하지 못하면(원격 podman · 신원 읽기
+///   실패) ID 만 적는다 — 그 행은 자동 증거를 만들지 않는다(OPEN · 소유자 해제 · 계약 v18l). 원장 쓰기 실패는 `Err`(시작하지 않는다).
+/// ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ① · v18p ①′) — 정지 결정 기록 고리. 원장 → (실패하면) 사건 표식. 어느 쪽도 정지를 막지 않는다.
+fn stop_decision_recorder(
+    handle: run_ledger::SharedRunLedger,
+    checkpoint_root: &std::path::Path,
+    node_id: &str,
+) -> owner_panel::StopRecorder {
+    let incident_dir = container::incident_dir_for(checkpoint_root);
+    let node_id = node_id.to_string();
+    std::sync::Arc::new(move |attempt_id: &str, kind: run_ledger::StopDecision| {
+        let recorded = handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_stop_decision(attempt_id, kind, SystemClock.now_unix_ms());
+        match recorded {
+            Ok(()) => println!("RUN_LEDGER_STOP_DECISION attempt_id={attempt_id} kind={}", kind.as_str()),
+            Err(why) => {
+                let name = container::derive_container_name(attempt_id);
+                match container::write_incident(
+                    &incident_dir,
+                    &name,
+                    &node_id,
+                    "STOP_DECIDED",
+                    &format!("정지 결정({}) 을 원장에 적지 못했다({why}) — 재부착하지 않는다 · 확인 뒤 해제한다", kind.as_str()),
+                ) {
+                    Ok(path) => println!(
+                        "STOP_DECISION_INCIDENT_RECORDED attempt_id={attempt_id} kind={} file={} — 원장 기록 실패: {why}",
+                        kind.as_str(),
+                        path.display()
+                    ),
+                    Err(marker) => println!(
+                        "STOP_DECISION_UNRECORDED attempt_id={attempt_id} kind={} — 원장({why}) · 사건 표식({marker}) 둘 다 실패 · 정지는 한다(계약 v18p 한계)",
+                        kind.as_str()
+                    ),
+                }
+            }
+        }
+    })
+}
+
+fn record_container_created(
+    handle: Option<&run_ledger::SharedRunLedger>,
+    attempt_id: &str,
+    program: &std::path::Path,
+    flavor: container::RuntimeFlavor,
+    container_id: &str,
+    reattach: Option<(&[u8], u64)>,
+) -> Result<(), String> {
+    let Some(handle) = handle else {
+        return Ok(());
+    };
+    // ★ 2026-10-04 01:29 (검수 s56 ④ — Codex) — create 는 런타임 CLI 의 기본 설정으로 가고 대상 해석은 그 뒤 따로 한다. 그 사이 설정이 바뀌면 다른 대상의 신원을
+    //   ID 와 함께 적을 수 있었다(부재 증거 · 재기동 정지가 엉뚱한 곳을 향한다). 그래서 해석한 고정 대상에서 **그 ID 를 새로 찾아** 있을 때만 적는다 —
+    //   컨테이너 ID 는 64자리 고유값이라 고정 대상에 있으면 그 대상이 만든 것이다. 없거나 묻지 못하면 대상을 적지 않는다(자동 증거 없음 · OPEN).
+    //   ★ 실행 중 감시 · 정지 명령(start · inspect · kill · logs · rm)은 여전히 고정하지 않은 명령이다 — 이 확인은 원장의 증거 대상만 지킨다.
+    let pinned = container::runtime_target::resolve_endpoint(program, flavor).and_then(|endpoint| {
+        match container::runtime_target::pinned_lookup(
+            program,
+            &endpoint,
+            &container::runtime_target::Lookup::Id(container_id),
+        )? {
+            container::runtime_target::Presence::Present => {}
+            container::runtime_target::Presence::Absent => {
+                return Err(format!(
+                    "해석한 대상({})에 방금 만든 컨테이너 {container_id} 가 없다 — create 가 다른 대상으로 갔을 수 있다",
+                    endpoint.to_ledger()
+                ))
+            }
+        }
+        container::runtime_target::read_identity(program, &endpoint)
+            .map(|identity| (endpoint.to_ledger(), identity))
+    });
+    let (target, identity) = match pinned {
+        Ok((target, identity)) => (Some(target), Some(identity)),
+        Err(why) => {
+            println!(
+                "RUNTIME_TARGET_UNPINNED attempt_id={attempt_id} detail={why} — 원장에 컨테이너 ID 만 적는다(이 행은 자동 증거를 만들지 않는다)"
+            );
+            (None, None)
+        }
+    };
+    let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+    ledger.record_runtime_target(attempt_id, container_id, target.as_deref(), identity.as_deref(), reattach)?;
+    println!(
+        "RUN_LEDGER_CONTAINER_RECORDED attempt_id={attempt_id} container_id={container_id} pinned={}",
+        target.is_some()
+    );
+    Ok(())
+}
+
+/// 갱신 때의 끊김 시한 — 실행 중 감시와 같은 계산(여유 0 이면 시간으로는 멈추지 않는다 — u64::MAX).
+fn renewal_self_stop_at(margin: u64, lease: &pb::Lease, sent_at: u64) -> u64 {
+    if margin > 0 {
+        owner_panel::disconnect_self_stop_at(
+            lease.issued_at_unix_ms,
+            lease.expires_at_unix_ms,
+            sent_at,
+            margin,
+        )
+    } else {
+        u64::MAX
+    }
+}
+
+/// ★ 조각 5c(v18j) — 갱신 성공마다 원장에 마지막 서명 Lease 바이트와 끊김 시한을 적는다. 실패해도 실행은 계속한다 — 원장에는 앞선 갱신의
+///   근거(더 이른 시한)가 남아 재기동의 재부착이 더 일찍 멈출 뿐이다(보수). 시한 "없음"(u64::MAX)은 원장이 담는 가장 큰 값으로 적는다.
+fn record_renewal_in_ledger(config: &AgentConfig, attempt_id: &str, lease: &pb::Lease, stop_at: u64) {
+    if let Some(Err(error)) = with_run_ledger(config, |ledger| {
+        ledger.record_renewal(attempt_id, &lease.encode_to_vec(), stop_at.min(i64::MAX as u64))
+    }) {
+        println!(
+            "RUN_LEDGER_RENEWAL_NOT_RECORDED attempt_id={attempt_id} detail={error} — 원장의 재부착 근거는 앞선 갱신의 것으로 남는다(시한이 더 이르다)"
+        );
+    }
 }
 
 /// 원장 치명 오류 — agent-loop 가 이 줄을 보고 멈춘다(계획 r1i ①).
@@ -4352,6 +5174,25 @@ pub fn clear_container_incidents(
     root: &std::path::Path,
     name: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
+    clear_container_incidents_with(root, name, None)
+}
+
+/// ★ 2026-10-03 11:25 (실행 알림 계획 조각 5d2 · 계약 §4 · §5 "해제") — 해제 명령이 OPEN(실행 여부 불명) 행을 풀 때 쓰는 것.
+pub struct RunReleaseArgs {
+    /// 노드 시드(`--seed-file` — Agent 의 `--own-seed-file` 과 같은 파일 · K0 평문 등급 그대로). STOP_CONFIRMED 를 이 키로 서명한다.
+    pub seed: [u8; 32],
+    /// ID(또는 고정 대상) 없는 행을 풀 때만 — 소유자 진술.
+    pub attestation: Option<run_evidence::OwnerAttestation>,
+}
+
+/// `clear_container_incidents` 와 같되, `release` 가 있으면 이름이 맞는 OPEN 행을 §4 절차(로그 보존 → 지움 → 새 조회 셋 · 신원 앞뒤)로 풀어
+/// STOP_CONFIRMED 알림 + STOP_PENDING 을 한 원장 트랜잭션에 적는다(차단은 그 알림의 ACK 로 풀린다 — 조각 5f). 증거를 세우지 못하면 아무것도 바꾸지 않고
+/// `Err`. `release` 없이 OPEN 행을 만나면 거부한다(조용히 건너뛰지 않는다).
+pub fn clear_container_incidents_with(
+    root: &std::path::Path,
+    name: Option<&str>,
+    release: Option<&RunReleaseArgs>,
+) -> Result<Vec<PathBuf>, String> {
     // ★ 단계 3 설계 v20(코덱스 c1s ① · 시험 T29c) — **루트 잠금을 먼저 얻고, 그 잠금 아래에서** 원장 상태를 판정한다. 전에는 원장 여부를 잠금 전에
     //   판정해, 그 사이 다른 Agent 가 원장을 켜고 끝내면 낡은 "켜지 않음" 판정으로 표식만 지울 수 있었다. 원장을 켜지 않은 루트도 이제 잠금 아래에서
     //   지운다 — Agent(루프)가 떠 있으면 거부한다(대가: 사건 해제는 루프를 멈추고 한다).
@@ -4373,6 +5214,15 @@ pub fn clear_container_incidents(
             ledger.clear_local_blocked(&row.attempt_id)?;
             println!("RUN_LEDGER_CLEARED attempt_id={}", row.attempt_id);
         }
+        if row.state == run_ledger::RowState::Open && named {
+            let release = release.ok_or_else(|| {
+                format!(
+                    "RUN_RELEASE_NEEDS_SEED: 실행 여부 불명(OPEN) 행 {} 이 있다 — 정지 확인 알림을 서명할 --seed-file(Agent 의 --own-seed-file)을 준다",
+                    row.attempt_id
+                )
+            })?;
+            release_open_row(&real_root, &mut ledger, &row, release)?;
+        }
     }
     let cleared = container::clear_incidents(&dir, name)?;
     if !cleared.is_empty() {
@@ -4380,6 +5230,118 @@ pub fn clear_container_incidents(
             .map_err(|error| format!("RUN_LEDGER: 사건 폴더를 sync 하지 못했다: {error:?}"))?;
     }
     Ok(cleared)
+}
+
+/// ★ 2026-10-03 11:25 (조각 5d2) — OPEN 행 하나를 §4 해제 절차로 푼다. 루트 잠금 아래에서 부른다.
+fn release_open_row(
+    real_root: &std::path::Path,
+    ledger: &mut run_ledger::RunLedger,
+    row: &run_ledger::AttemptRow,
+    release: &RunReleaseArgs,
+) -> Result<(), String> {
+    let id = &row.attempt_id;
+    let program = row
+        .runtime_program
+        .as_deref()
+        .map(std::path::Path::new)
+        .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 런타임 실행 파일이 없다"))?;
+    let node_id = row
+        .node_id
+        .as_deref()
+        .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 노드 id 가 없다"))?;
+    let owner = container_owner_label(node_id, real_root);
+    let salvage_dir = container::leftover_logs_dir_for(real_root);
+    let queries = run_evidence::CliQueries {
+        program,
+        salvage_dir: Some(&salvage_dir),
+    };
+    // 원장에 연결 대상이 없는 행만 — 그 행의 런타임 실행 파일 · 종류로 지금 대상을 해석해 모든 명령에 명시한다(감사에 남긴다).
+    let fallback = if row.connection_target.is_none() {
+        let flavor = row
+            .runtime_kind
+            .as_deref()
+            .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 런타임 종류가 없다"))
+            .and_then(container::RuntimeFlavor::parse)?;
+        Some(container::runtime_target::resolve_endpoint(program, flavor).map_err(|why| {
+            format!("RUN_RELEASE_REFUSED: 행 {id} 의 런타임 대상을 정하지 못했다 — {why}")
+        })?)
+    } else {
+        None
+    };
+    let evidence = run_evidence::release_evidence(
+        row,
+        &owner,
+        release.attestation.as_ref(),
+        fallback,
+        &queries,
+    )
+    .map_err(|why| format!("RUN_RELEASE_NO_EVIDENCE: 행 {id} — {why} · 아무것도 바꾸지 않았다"))?;
+    let now = SystemClock.now_unix_ms();
+    let (stop_evidence, reason) = match &evidence {
+        run_evidence::ReleaseEvidence::ContainerAbsentConfirmed => (
+            pb::RunStopEvidence::ContainerAbsentConfirmed,
+            "owner_release_container_absent".to_string(),
+        ),
+        run_evidence::ReleaseEvidence::OwnerAttested { endpoint, identity } => {
+            let attestation = release
+                .attestation
+                .as_ref()
+                .expect("진술 없는 OwnerAttested 는 만들어지지 않는다");
+            // 감사 칸 — 진술 · 시각 · 근거 종류 · 물은 대상 · 신원(계약 §4 "ID 없는 행"). STOP 바이트와 같은 트랜잭션에 적힌다.
+            (
+                pb::RunStopEvidence::ContainerAbsentOwnerAttested,
+                format!(
+                    "owner_attested basis={} at_unix_ms={now} endpoint={endpoint:?} identity={identity:?} statement={:?}",
+                    attestation.basis.as_str(),
+                    attestation.statement
+                ),
+            )
+        }
+    };
+    let sequence = ledger.next_sequence(id)?;
+    let notice = run_evidence::build_notice(
+        &SigningKey::from_bytes(&release.seed),
+        row,
+        run_evidence::NoticeShape::StopConfirmed(stop_evidence),
+        sequence,
+        now,
+        now,
+    )?;
+    ledger.stop_pending_with_stop(id, &reason, &notice)?;
+    println!(
+        "RUN_LEDGER_RELEASED attempt_id={id} state=STOP_PENDING stop_evidence={stop_evidence:?} sequence={sequence} — 보낸 알림의 ACK 를 받으면 차단이 풀린다"
+    );
+    Ok(())
+}
+
+/// ★ 조각 5d2 — 해제 명령의 인자를 읽는다. 시드 파일이 없으면 `None`(OPEN 행을 만나면 거부된다). 진술은 근거 종류와 문장을 **둘 다** 준다.
+pub fn run_release_args_from(
+    seed_file: Option<&str>,
+    attest_basis: Option<&str>,
+    attest_statement: Option<&str>,
+) -> Result<Option<RunReleaseArgs>, String> {
+    let attestation = match (attest_basis, attest_statement) {
+        (None, None) => None,
+        (Some(basis), Some(statement)) if !statement.trim().is_empty() => Some(run_evidence::OwnerAttestation {
+            basis: run_evidence::OwnerAttestBasis::parse(basis)?,
+            statement: statement.to_string(),
+        }),
+        _ => {
+            return Err("--owner-attest-basis 와 --owner-attest-statement(비지 않은 문장)를 함께 준다".into())
+        }
+    };
+    let Some(path) = seed_file else {
+        if attestation.is_some() {
+            return Err("소유자 진술은 --seed-file 과 함께만 쓴다(진술로 푸는 것도 정지 확인 알림을 서명한다)".into());
+        }
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("--seed-file 을 읽지 못했다({path}): {e}"))?;
+    Ok(Some(RunReleaseArgs {
+        seed: hex_to_seed(text.trim())?,
+        attestation,
+    }))
 }
 
 pub fn container_incident_dir(root: &std::path::Path) -> Result<PathBuf, String> {
@@ -5331,6 +6293,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         owner_panel_state: owner_panel::OwnerPanelState::new(),
         run_ledger: flags.bool_flag("--run-ledger"),
         run_ledger_handle: None,
+        send_run_notice: flags.bool_flag("--send-run-notice"),
         owner_panel_port: flags
             .checked_get::<u16>("--owner-panel-port")?
             .map(|v| v.parse::<u16>())
@@ -5369,6 +6332,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             None => Vec::new(),
         },
         require_ack_receipt: flags.bool_flag("--require-ack-receipt"),
+        use_mailbox: flags.bool_flag("--use-mailbox"),
         attest_gpus: flags.bool_flag("--attest-gpus"),
         gpu_pin: match flags.get("--gpu-pin") {
             Some(raw) => Some(parse_gpu_pin(raw)?),
@@ -5823,6 +6787,7 @@ mod tests {
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             run_ledger: false,
             run_ledger_handle: None,
+            send_run_notice: false,
             allow_elevated_host_execution: false,
             disconnect_stop_margin_ms: 10_000,
             owner_panel_port: None,
@@ -5845,6 +6810,7 @@ mod tests {
             pool_peer_keys: Vec::new(),
             gpu_pin: None,
             require_ack_receipt: false,
+            use_mailbox: false,
             attest_gpus: false,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
@@ -6375,6 +7341,7 @@ mod defect_19_tests {
             cgroup_parent: None,
             container: container::ContainerDecision::Host,
             allow_elevated_host: false,
+            on_container_created: None,
         };
         let mut keep_run_dir = false;
         let report = run_and_capture_workload(
@@ -7153,6 +8120,238 @@ mod report_session_tests {
             stream.write_all(&frame).expect("Ack 전송");
         });
         (addr, handle)
+    }
+
+    /// ★ 2026-10-03 11:51 (조각 5f) — 원장에 알림을 둔 Agent 설정(알림 켜짐 · 원장 손잡이). 행은 컨테이너 행 하나, 알림은 `shape` 로 하나 적는다.
+    fn notice_config(
+        dir: &std::path::Path,
+        addr: &str,
+        shape: run_evidence::NoticeShape,
+    ) -> (AgentConfig, run_ledger::StoredNotice) {
+        let mut config = config(dir, addr);
+        config.send_run_notice = true;
+        std::fs::create_dir_all(&config.checkpoint_root).unwrap();
+        let paths = run_ledger::LedgerPaths::for_root(&config.checkpoint_root).unwrap();
+        let mut ledger = run_ledger::open_for_agent(&paths).unwrap();
+        let mut row = run_ledger::AttemptRow::new_active("attempt-n", "job-n", AGENT_ID, 5, run_ledger::Executor::Container);
+        row.container_name = Some("gputeer-attempt-n".into());
+        ledger.insert_active(&row).unwrap();
+        let notice = run_evidence::build_notice(&SigningKey::from_bytes(&AGENT_SEED), &row, shape, 1, 10, 11).unwrap();
+        match shape {
+            run_evidence::NoticeShape::StopConfirmed(_) => ledger.stop_pending_with_stop("attempt-n", "t", &notice).unwrap(),
+            run_evidence::NoticeShape::RunUnknown { .. } => ledger.open_with_run_unknown("attempt-n", "t", &notice).unwrap(),
+        }
+        let stored = ledger.unsent_notices().unwrap().remove(0);
+        config.run_ledger_handle = Some(std::sync::Arc::new(std::sync::Mutex::new(ledger)));
+        (config, stored)
+    }
+
+    /// 가짜 Coordinator — Hello(REPORT) 와 실행 알림을 검증해 읽고, `answer` 가 만든 ACK 를 보낸다.
+    fn fake_notice_coordinator(
+        answer: impl FnOnce(&pb::AgentSessionHello, &pb::AttemptRunNotice) -> pb::AttemptRunNoticeAck + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let addr = listener.local_addr().expect("주소").to_string();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut keys = InMemoryKeyring::new();
+            keys.insert(AGENT_ID.to_string(), SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+            let mut replay = InMemoryReplayGuard::new();
+            let hello = match read_frame(&mut stream, 1, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock)
+                .expect("Hello 읽기")
+            {
+                IngressMessage::SessionHello(verified) => verified.get().clone(),
+                _ => panic!("첫 프레임은 Hello 여야 한다"),
+            };
+            assert_eq!(hello.mode, gputeer_protocol::constants::MODE_REPORT);
+            let notice = match read_frame(&mut stream, 1, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock)
+                .expect("알림 읽기")
+            {
+                IngressMessage::AttemptRunNotice(verified) => verified.get().clone(),
+                _ => panic!("둘째 프레임은 실행 알림이어야 한다"),
+            };
+            let ack = answer(&hello, &notice);
+            let frame = write_frame(FrameType::AttemptRunNoticeAck, &ack.encode_to_vec()).expect("ACK 프레임");
+            stream.write_all(&frame).expect("ACK 전송");
+        });
+        (addr, handle)
+    }
+
+    fn notice_ack(hello: &pb::AgentSessionHello, notice: &pb::AttemptRunNotice, hash: Vec<u8>) -> pb::AttemptRunNoticeAck {
+        let mut ack = pb::AttemptRunNoticeAck {
+            schema_version: 1,
+            job_id: notice.job_id.clone(),
+            attempt_id: notice.attempt_id.clone(),
+            node_id: notice.node_id.clone(),
+            fence_epoch: notice.fence_epoch,
+            notice_hash: Some(pb::Digest { algo: 1, value: hash }),
+            kind: notice.kind,
+            sequence: notice.sequence,
+            created: true,
+            coordinator_id: COORD_ID.into(),
+            issued_at_unix_ms: SystemClock.now_unix_ms(),
+            session_nonce: hello.nonce.clone(),
+            ..Default::default()
+        };
+        ack.coordinator_signature = sign(&SigningKey::from_bytes(&COORD_SEED), &ack).to_vec();
+        ack
+    }
+
+    /// 정지 확인을 보내고 검증된 ACK 를 받으면 원장이 ACKED 가 되고 새 작업 관문이 열린다. 보낸 바이트는 원장에 적힌 그대로다.
+    #[test]
+    fn a_stop_notice_acked_by_the_coordinator_unblocks_new_work() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(None::<pb::AttemptRunNotice>));
+        let seen = std::sync::Arc::clone(&sent);
+        let (addr, server) = fake_notice_coordinator(move |hello, notice| {
+            *seen.lock().unwrap() = Some(notice.clone());
+            let hash = gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(notice));
+            notice_ack(hello, notice, hash.to_vec())
+        });
+        let (config, stored) = notice_config(
+            dir.path(),
+            &addr,
+            run_evidence::NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed),
+        );
+        flush_run_notices_then_gate(&config, &SigningKey::from_bytes(&AGENT_SEED)).expect("ACKED 면 관문이 열린다");
+        server.join().unwrap();
+        assert_eq!(
+            sent.lock().unwrap().as_ref().map(|n| n.encode_to_vec()),
+            Some(stored.notice_bytes.clone()),
+            "원장의 바이트를 그대로 보내지 않았다"
+        );
+        let state = with_run_ledger(&config, |ledger| ledger.row("attempt-n")).unwrap().unwrap().unwrap().state;
+        assert_eq!(state, run_ledger::RowState::Acked);
+        assert!(with_run_ledger(&config, |ledger| ledger.unsent_notices()).unwrap().unwrap().is_empty());
+    }
+
+    /// ACK 의 notice_hash 가 보낸 알림과 다르면 받아들이지 않는다 — 원장은 그대로(보내지 않은 것으로 남아 다음 회차에 다시) · 새 작업은 막힌다.
+    ///   불명 알림의 ACK 는 받아들여도 차단을 풀지 않는다(OPEN 그대로).
+    #[test]
+    fn a_mismatched_ack_is_refused_and_an_unknown_ack_never_unblocks() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let (addr, server) = fake_notice_coordinator(|hello, notice| notice_ack(hello, notice, vec![0u8; 32]));
+        let (config, _) = notice_config(
+            dir.path(),
+            &addr,
+            run_evidence::NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed),
+        );
+        let refused = flush_run_notices_then_gate(&config, &SigningKey::from_bytes(&AGENT_SEED)).unwrap_err();
+        server.join().unwrap();
+        assert!(refused.contains("RUN_LEDGER_BLOCKED"), "{refused}");
+        let state = with_run_ledger(&config, |ledger| ledger.row("attempt-n")).unwrap().unwrap().unwrap().state;
+        assert_eq!(state, run_ledger::RowState::StopPending);
+        assert_eq!(with_run_ledger(&config, |ledger| ledger.unsent_notices()).unwrap().unwrap().len(), 1, "다시 보낼 것으로 남아야 한다");
+
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let (addr, server) = fake_notice_coordinator(|hello, notice| {
+            let hash = gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(notice));
+            notice_ack(hello, notice, hash.to_vec())
+        });
+        let (config, _) = notice_config(
+            dir.path(),
+            &addr,
+            run_evidence::NoticeShape::RunUnknown {
+                origin: pb::RunUnknownOrigin::Running,
+                reason: pb::RunUnknownReason::ExitUnobserved,
+            },
+        );
+        let refused = flush_run_notices_then_gate(&config, &SigningKey::from_bytes(&AGENT_SEED)).unwrap_err();
+        server.join().unwrap();
+        assert!(refused.contains("RUN_LEDGER_BLOCKED"), "{refused}");
+        let state = with_run_ledger(&config, |ledger| ledger.row("attempt-n")).unwrap().unwrap().unwrap().state;
+        assert_eq!(state, run_ledger::RowState::Open, "불명 ACK 로 차단이 풀렸다");
+        assert!(with_run_ledger(&config, |ledger| ledger.unsent_notices()).unwrap().unwrap().is_empty(), "받은 불명 알림은 다시 보내지 않는다");
+    }
+
+    /// 활성화 관문 — `--send-run-notice` 는 ADR-034 강제 코드 전까지 켜는 즉시 기동을 거부한다(우회 없음).
+    #[test]
+    fn the_send_run_notice_switch_refuses_startup_until_activation() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        config.send_run_notice = true;
+        let refused = run(config).unwrap_err();
+        assert!(refused.contains("RUN_NOTICE_NOT_ACTIVATED"), "{refused}");
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 검수 mba1) — `--use-mailbox` 면 **모든** FRESH 연결 직전에 우편함을 비운다 — 첫 연결뿐 아니라 재접속마다.
+    ///   가짜 Coordinator 는 MAILBOX 에는 서명된 빈 배달로 답하고, FRESH 는 Hello 를 읽자마자 끊는다(일시적 실패 → 재접속). 연결마다 Hello 의 mode 를 적어
+    ///   MAILBOX · FRESH 가 번갈아 오는지 본다.
+    #[test]
+    fn every_fresh_connection_is_preceded_by_a_mailbox_session() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("주소").to_string();
+        let modes = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i32>::new()));
+        let seen = std::sync::Arc::clone(&modes);
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            let mut keys = InMemoryKeyring::new();
+            keys.insert(
+                AGENT_ID.to_string(),
+                SigningKey::from_bytes(&AGENT_SEED).verifying_key(),
+            );
+            while std::time::Instant::now() < deadline && seen.lock().unwrap().len() < 4 {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    Err(e) => panic!("accept: {e}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let hello = match read_frame(
+                    &mut stream,
+                    1,
+                    KeyDirectorySource::Provided(&keys),
+                    &mut InMemoryReplayGuard::new(),
+                    &SystemClock,
+                ) {
+                    Ok(IngressMessage::SessionHello(verified)) => verified.get().clone(),
+                    _ => continue,
+                };
+                seen.lock().unwrap().push(hello.mode);
+                if hello.mode == gputeer_protocol::constants::MODE_MAILBOX {
+                    let mut delivery = pb::MailboxDelivery {
+                        schema_version: 1,
+                        node_id: AGENT_ID.into(),
+                        notices: Vec::new(),
+                        coordinator_id: COORD_ID.into(),
+                        issued_at_unix_ms: SystemClock.now_unix_ms(),
+                        session_nonce: hello.nonce.clone(),
+                        coordinator_signature: Vec::new(),
+                    };
+                    delivery.coordinator_signature =
+                        sign(&SigningKey::from_bytes(&COORD_SEED), &delivery).to_vec();
+                    let frame = write_frame(FrameType::MailboxDelivery, &delivery.encode_to_vec())
+                        .expect("배달 프레임");
+                    stream.write_all(&frame).expect("배달 전송");
+                }
+                // FRESH 는 그냥 닫는다 — Agent 에게는 일시적 실패다
+            }
+        });
+        let mut c = config(dir.path(), &addr);
+        c.use_mailbox = true;
+        c.run_ledger = true;
+        c.require_ack_receipt = true;
+        c.max_reconnect_attempts = 2;
+        c.retry_base_ms = 1;
+        c.retry_cap_ms = 5;
+        let outcome = run(c);
+        server.join().expect("가짜 Coordinator");
+        let modes = modes.lock().unwrap().clone();
+        let mailbox = gputeer_protocol::constants::MODE_MAILBOX;
+        let fresh = gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
+        assert_eq!(
+            modes,
+            vec![mailbox, fresh, mailbox, fresh],
+            "재접속 전에 우편함을 다시 비우지 않았다(결과 {outcome:?})"
+        );
     }
 
     /// 검증한 Ack 를 받으면 outbox 파일을 지운다.
@@ -7999,6 +9198,101 @@ mod run_ledger_startup_tests {
             .state
     }
 
+    /// ★ 조각 5d — 알림을 쓰는 Agent 의 기동: 증거를 세우지 못한 행은 서명된 RUN_UNKNOWN 알림과 함께 OPEN 이 되고(한 트랜잭션), 새 작업을 받지 않는다.
+    ///   ID 를 적기 전에 죽은 행은 "기동 요청이 풀리지 않음"(STARTING) · ID 가 있으면 "종료 관측 못 함"(RUNNING). 알림 꺼짐이면 지금처럼 LOCAL_BLOCKED.
+    /// ★ 조각 5e2a(계약 v18o ① · v18p ①′) — 정지 결정은 원장에 적고(첫 결정이 이긴다), 원장에 적지 못하면 그 컨테이너의 사건 표식을 쓴다.
+    #[test]
+    fn a_stop_decision_goes_to_the_ledger_or_else_to_an_incident_marker() {
+        let dir = tempfile::tempdir().expect("임시");
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "attempt-s", false);
+        let handle: run_ledger::SharedRunLedger = std::sync::Arc::new(std::sync::Mutex::new(
+            run_ledger::open_for_agent(&paths(&on)).expect("원장"),
+        ));
+        let recorder = stop_decision_recorder(handle.clone(), &on.checkpoint_root, AGENT_ID);
+        recorder("attempt-s", run_ledger::StopDecision::Owner);
+        let row = handle.lock().unwrap().row("attempt-s").unwrap().unwrap();
+        assert_eq!(row.stop_decision.as_deref(), Some("OWNER"));
+        let incidents = container::incident_dir_for(&on.checkpoint_root);
+        let count = |dir: &std::path::Path| fs::read_dir(dir).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(count(&incidents), 0, "원장에 적었는데 사건 표식을 썼다");
+        // 원장에 행이 없는 시도 — 원장 기록이 실패하므로 사건 표식으로 간다
+        recorder("attempt-ghost", run_ledger::StopDecision::Deadline);
+        assert_eq!(count(&incidents), 1, "원장 기록이 실패했는데 사건 표식이 없다");
+    }
+
+    #[test]
+    fn with_notices_an_unproven_container_row_opens_with_a_signed_run_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        on.send_run_notice = true;
+        active_container_row(&on, "no-id", false);
+        active_container_row(&on, "with-id", false);
+        {
+            let mut ledger = run_ledger::open_for_agent(&paths(&on)).unwrap();
+            ledger
+                .record_runtime_target("with-id", "cid-7", Some("docker-host:unix:///nowhere.sock"), Some("docker:D"), None)
+                .unwrap();
+        }
+        for id in ["no-id", "with-id"] {
+            record_attempt_started_here(&on.checkpoint_root, id).unwrap();
+        }
+        // ★ 조각 5f — 알림을 쓰면 기동이 막힌 행 때문에 거부되지 않는다(알림을 보내야 풀린다) · 원장은 새 작업을 막는다.
+        let opened = open_run_ledger_at_startup(&on).unwrap().expect("원장");
+        assert!(opened.blocks_new_work().unwrap());
+        drop(opened);
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        let mut keys = gputeer_crypto::InMemoryKeyring::new();
+        keys.insert(AGENT_ID, SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+        let verifier = gputeer_crypto::Ed25519Verifier::new(keys);
+        for (id, origin, reason) in [
+            ("no-id", pb::RunUnknownOrigin::Starting, pb::RunUnknownReason::StartRequestUnresolved),
+            ("with-id", pb::RunUnknownOrigin::Running, pb::RunUnknownReason::ExitUnobserved),
+        ] {
+            assert_eq!(ledger.row(id).unwrap().unwrap().state, run_ledger::RowState::Open, "{id}");
+            let notices = ledger.notices(id).unwrap();
+            assert_eq!(notices.len(), 1, "{id}");
+            assert_eq!(notices[0].kind, run_ledger::NoticeKind::RunUnknown);
+            let decoded = pb::AttemptRunNotice::decode(notices[0].notice_bytes.as_slice()).unwrap();
+            assert_eq!((decoded.origin, decoded.reason), (origin as i32, reason as i32), "{id}");
+            assert_eq!(decoded.fence_epoch, 3);
+            gputeer_protocol::signing::verify(&decoded, 1, &verifier, 999, &mut gputeer_protocol::signing::NoReplayCheck)
+                .expect("노드 키로 서명돼야 한다");
+            assert_eq!(
+                notices[0].notice_hash,
+                gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(&decoded))
+            );
+            assert!(!notices[0].sent, "아직 보내지 않았다");
+        }
+        // 다시 띄워도 OPEN 행은 다시 판정하지 않는다(ACTIVE 만 판정한다) — 알림이 늘지 않는다
+        drop(open_run_ledger_at_startup(&on).unwrap());
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        assert_eq!(ledger.notices("with-id").unwrap().len(), 1);
+    }
+
+    /// ★ 조각 5d2 — 해제 명령: OPEN 행은 시드 없이 거부하고, 시드가 있어도 증거를 세우지 못하면(런타임 없음 · ID 없는 행에 진술 없음) 아무것도 바꾸지 않는다.
+    #[test]
+    fn the_release_command_never_unblocks_an_open_row_without_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        on.send_run_notice = true;
+        active_container_row(&on, "open-1", false);
+        record_attempt_started_here(&on.checkpoint_root, "open-1").unwrap();
+        drop(open_run_ledger_at_startup(&on).unwrap());
+        assert_eq!(state(&on, "open-1"), run_ledger::RowState::Open);
+        let name = container::derive_container_name("open-1");
+        let refused = clear_container_incidents_with(&on.checkpoint_root, Some(&name), None).unwrap_err();
+        assert!(refused.contains("RUN_RELEASE_NEEDS_SEED"), "{refused}");
+        let release = RunReleaseArgs { seed: AGENT_SEED, attestation: None };
+        let refused = clear_container_incidents_with(&on.checkpoint_root, Some(&name), Some(&release)).unwrap_err();
+        assert!(refused.contains("RUN_RELEASE_REFUSED") || refused.contains("RUN_RELEASE_NO_EVIDENCE"), "{refused}");
+        assert_eq!(state(&on, "open-1"), run_ledger::RowState::Open, "증거 없이 상태가 바뀌었다");
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        assert_eq!(ledger.notices("open-1").unwrap().len(), 1, "증거 없이 정지 확인 알림을 적었다");
+        // 다른 이름만 고르면 그 OPEN 행은 건드리지 않는다
+        assert!(clear_container_incidents_with(&on.checkpoint_root, Some("gputeer-other"), None).is_ok());
+    }
+
     #[test]
     fn r31_never_enabled_roots_start_as_before_and_enabled_roots_refuse_without_the_switch() {
         let dir = tempfile::tempdir().unwrap();
@@ -8162,6 +9456,64 @@ mod run_ledger_startup_tests {
         record_attempt_started_here(&on.checkpoint_root, "h").unwrap();
         assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
         assert_eq!(state(&on, "h"), run_ledger::RowState::Closed);
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 회차 전 처리는 원장으로만 NOT_RUNNING 을 준다: 행 없음 · CLOSED 면 NOT_RUNNING,
+    ///   ACTIVE 면 답하지 않는다(살아 있을 수 있는 컨테이너) · 이 프로세스의 실행 목록에 있어도 답하지 않는다.
+    #[test]
+    fn the_idle_mailbox_answer_comes_only_from_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        active_container_row(&on, "active", false);
+        active_container_row(&on, "closed", true);
+        {
+            let mut ledger = run_ledger::open_for_agent(&paths(&on)).expect("원장");
+            ledger
+                .close_active("closed", run_ledger::CloseReason::NotStarted)
+                .unwrap();
+        }
+        on.run_ledger_handle = Some(std::sync::Arc::new(std::sync::Mutex::new(
+            run_ledger::open_for_agent(&paths(&on)).expect("원장"),
+        )));
+        let notice = |attempt: &str| pb::SupersedeNotice {
+            attempt_id: attempt.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            mailbox::decide_when_idle(&on, &notice("never-here")),
+            Some(pb::MailboxAction::NotRunning)
+        );
+        assert_eq!(
+            mailbox::decide_when_idle(&on, &notice("closed")),
+            Some(pb::MailboxAction::NotRunning)
+        );
+        assert_eq!(mailbox::decide_when_idle(&on, &notice("active")), None);
+        // 원장이 꺼져 있으면(기동 검사가 막는 조합) 확인할 길이 없다 — 답하지 않는다
+        let mut off = on.clone();
+        off.run_ledger_handle = None;
+        assert_eq!(mailbox::decide_when_idle(&off, &notice("never-here")), None);
+    }
+
+    /// ★ 2026-10-02 — `--use-mailbox` 는 원장 · 수신 확인 없이 기동 거부(연결 전).
+    #[test]
+    fn use_mailbox_needs_the_ledger_and_the_ack_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let no_ledger = config(
+            dir.path(),
+            &[
+                "--use-mailbox",
+                "true",
+                "--require-ack-receipt",
+                "true",
+                "--report-over-session",
+                "true",
+            ],
+        );
+        let error = run(no_ledger).expect_err("원장 없이 우편함을 켰다");
+        assert!(error.contains("USE_MAILBOX_NEEDS_RUN_LEDGER"), "{error}");
+        let no_receipt = config(dir.path(), &["--use-mailbox", "true"]);
+        let error = run(no_receipt).expect_err("수신 확인 없이 우편함을 켰다");
+        assert!(error.contains("USE_MAILBOX_NEEDS_ACK_RECEIPT"), "{error}");
     }
 }
 

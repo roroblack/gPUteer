@@ -310,8 +310,24 @@ impl CoordinatorAttemptReportStore {
                     node_id: report.node_id.clone(),
                 });
             }
+            // ★ 2026-10-03 12:49 (조각 6d · 계약 §2 · state-machines §3 MUST) — 시도가 RUN_UNKNOWN 이면 재전송도 증거로만 — 해제 · 선점을 하지 않는다.
+            let held = staging_store::fetch_attempt(&transaction, &report.attempt_id)
+                .map_err(map_staging_error)?
+                .is_some_and(|attempt| attempt.state == AttemptState::RunUnknown);
+            if held {
+                transaction.commit().map_err(map_sql_error)?;
+                return Ok(StoreAttemptReportResult {
+                    binding,
+                    created: false,
+                    notes: vec![held_note(&report.attempt_id)],
+                });
+            }
+            // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 관측 못 한 보고 뒤 UNREPORTED 보류가 남아 있으면 재전송도 해제하지 않는다.
+            let (release, kept, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &binding.report_hash, release)?;
+            let owner_preempt = if kept { None } else { owner_preempt };
             // ★ 결함 213 · 215 — 재전송에도 해제 · 선점을 다시 시도한다(아래 after_report 는 둘 다 멱등이다).
-            let notes = after_report(&transaction, verified, release, owner_preempt)?;
+            let mut notes = after_report(&transaction, verified, release, owner_preempt)?;
+            notes.append(&mut held_notes);
             transaction.commit().map_err(map_sql_error)?;
             return Ok(StoreAttemptReportResult {
                 binding,
@@ -360,6 +376,48 @@ impl CoordinatorAttemptReportStore {
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterReportInsert)?;
 
+        // ★ 2026-10-03 12:49 (조각 6d · 계약 §2 "옛 형식 보고와의 관계" · state-machines §3 MUST "RUN_UNKNOWN 에서 나가는 입력은 STOP_CONFIRMED 하나뿐") —
+        //   시도가 RUN_UNKNOWN 이면 보고(어느 버전 · 어느 결과든)는 **증거로만** 저장한다. 시도 · Job 을 옮기지 않고, 해제 · 선점도 하지 않는다
+        //   (보류와 예약 · Lease 는 STOP_CONFIRMED 가 푼다). 전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다.
+        //   RECONCILE_NEEDED 사건을 남긴다(계약 시험 6) — 자동 canonical 선택은 하지 않는다.
+        if attempt.state == AttemptState::RunUnknown {
+            let outcome = pb::AttemptOutcome::try_from(report.outcome)
+                .map(|o| o.as_str_name().to_string())
+                .unwrap_or_else(|_| format!("UNKNOWN({})", report.outcome));
+            let exit = pb::ExitObservation::try_from(report.exit_observation)
+                .map(|o| o.as_str_name().to_string())
+                .unwrap_or_else(|_| format!("UNKNOWN({})", report.exit_observation));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            crate::run_notice_store::record_reconcile_needed(
+                &transaction,
+                &report.attempt_id,
+                &format!(
+                    "실행 여부 불명 시도에 종료 보고(outcome={outcome} exit={exit} fence={}) — 증거로만 저장했다 · 상태는 그대로 · 사람이 맞춰 본다",
+                    report.fence_epoch
+                ),
+                now,
+            )
+            .map_err(|error| AttemptReportStoreError::Staging(format!("RECONCILE_NEEDED 기록: {error}")))?;
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(StoreAttemptReportResult {
+                binding: StoredAttemptReportBinding {
+                    report: report.clone(),
+                    report_hash,
+                    signer_id_at_submission: signer_id.to_string(),
+                    bound_job_id: report.job_id.clone(),
+                    bound_attempt_id: report.attempt_id.clone(),
+                    bound_node_id: report.node_id.clone(),
+                    bound_fence_epoch: report.fence_epoch,
+                    bound_via,
+                },
+                created: true,
+                notes: vec![held_note(&report.attempt_id)],
+            });
+        }
+
         // ★★ 2026-09-22 (§A1 4c) — **보고 저장과 같은 트랜잭션에서** Attempt 를 종료 상태로 옮긴다.
         //   갈라 놓으면 "보고는 있는데 상태는 CREATED" 인 행이 다시 생기고, 그게 정확히
         //   예약을 풀지 못하게 만들던 상태였다.
@@ -400,9 +458,15 @@ impl CoordinatorAttemptReportStore {
             .map_err(|error| AttemptReportStoreError::Staging(format!("Job 종료 전이: {error}")))?;
         }
 
+        // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 그 시도에 D6 보류(UNREPORTED)가 있으면: 종료를 관측한 보고는 보류를 풀고 평소대로, 관측 못 한 보고는
+        //   전이는 평소대로 하되 해제는 하지 않는다(보류 · 예약 · Lease 를 남긴다 — 운영자 release-held-job 또는 그 시도의 STOP_CONFIRMED 가 푼다).
+        let (release, kept, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &report_hash, release)?;
+        // ★ 2026-10-04 01:27 (검수 s56 ③ — Codex) — 보류를 남기면 소유자 선점도 하지 않는다(선점은 Lease 를 폐기한다 — 관측 못 한 보고는 보류 · 예약 · Lease 를 그대로 둔다).
+        let owner_preempt = if kept { None } else { owner_preempt };
         // ★ 예약 해제 · 소유자 선점까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
         //   오류가 그대로 올라가고 **보고 저장도 롤백된다** — 반쪽 적용을 만들지 않는다.
-        let notes = after_report(&transaction, verified, release, owner_preempt)?;
+        let mut notes = after_report(&transaction, verified, release, owner_preempt)?;
+        notes.append(&mut held_notes);
 
         transaction.commit().map_err(map_sql_error)?;
 
@@ -561,6 +625,54 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
 }
 
 /// 보고가 저장된(또는 이미 있던) 같은 트랜잭션에서 예약 해제와 소유자 선점을 한다. 둘 다 멱등이다.
+/// ★ 2026-10-03 12:49 (조각 6d) — RUN_UNKNOWN 시도에 온 보고를 증거로만 저장했다는 한 줄.
+fn held_note(attempt_id: &str) -> String {
+    format!("REPORT_HELD_RUN_UNKNOWN attempt_id={attempt_id} — 증거로만 저장(시도 · Job · 예약 · Lease 그대로 · STOP_CONFIRMED 가 푼다)")
+}
+
+/// ★ 2026-10-03 13:28 (계약 v18k §6 b15 ② · 조각 7c) — 그 시도에 UNREPORTED 보류가 있으면 보고의 종료 관측에 따라 해제 요청을 거른다.
+/// 관측한 보고 → 보류를 풀고(감사 — report_hash) 해제 요청을 그대로 둔다 · 관측 못 한 보고 → 해제 요청을 버린다(보류 · 예약 · Lease 를 남긴다).
+#[allow(clippy::type_complexity)]
+fn gate_release_on_unreported_hold(
+    transaction: &Connection,
+    report: &pb::AttemptReport,
+    report_hash: &[u8; 32],
+    release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+) -> Result<(Option<(crate::reservation_release::ReleaseAuthorization, u64)>, bool, Vec<String>), AttemptReportStoreError> {
+    let held = crate::job_holds::has_unreported_hold(transaction, &report.job_id, &report.attempt_id)
+        .map_err(AttemptReportStoreError::Staging)?;
+    if !held {
+        return Ok((release, false, Vec::new()));
+    }
+    let observed_exit = matches!(
+        pb::ExitObservation::try_from(report.exit_observation),
+        Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+    );
+    let now = release.as_ref().map(|(_, at)| *at).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    });
+    if observed_exit {
+        crate::job_holds::release_unreported_by_observed_report(transaction, &report.job_id, &report.attempt_id, report_hash, now)
+            .map_err(AttemptReportStoreError::Staging)?;
+        return Ok((
+            release,
+            false,
+            vec![format!("UNREPORTED_HOLD_RELEASED attempt_id={} — 종료를 관측한 서명된 보고가 보류를 풀었다", report.attempt_id)],
+        ));
+    }
+    Ok((
+        None,
+        true,
+        vec![format!(
+            "UNREPORTED_HOLD_KEPT attempt_id={} — 종료를 관측하지 못한 보고라 보류 · 예약 · Lease 를 남긴다(release-held-job · STOP_CONFIRMED 가 푼다)",
+            report.attempt_id
+        )],
+    ))
+}
+
 fn after_report(
     transaction: &Connection,
     verified: &Verified<pb::AttemptReport>,
@@ -1005,7 +1117,15 @@ mod tests {
         .unwrap();
         jobs.start_planning(JOB_ID, 110).unwrap();
         jobs.enqueue(JOB_ID, "plan-1", 120).unwrap();
+        // ★ 2026-10-03 13:11 (조각 7b) — 이 픽스처의 장애 이어받기 시험들은 PURE 작업을 전제로 한다(D6 전에는 등급을 보지 않았다). 선언을 명시한다.
         drop(jobs);
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO coordinator_job_side_effects(job_id, side_effect_class, source) VALUES (?1, 'PURE', 'SUBMISSION')",
+                rusqlite::params![JOB_ID],
+            )
+            .unwrap();
 
         let request = StageQueuedRequest {
             operation_key: [2; 16],
@@ -1499,7 +1619,7 @@ mod tests {
             let mut staging = CoordinatorStagingStore::open(&fixture.path).unwrap();
             assert_eq!(
                 staging
-                    .record_grant_accepted(ATTEMPT_ID, 250, false)
+                    .record_grant_accepted(ATTEMPT_ID, 250, false, false)
                     .unwrap(),
                 crate::staging_store::GrantAcceptedRecord::Recorded
             );
@@ -1516,6 +1636,7 @@ mod tests {
             crate::failover::failover_lost_attempts(
                 &fixture.path,
                 &policy,
+                &crate::supersede_notice_store::test_signer(),
                 lease.expires_at_unix_ms + 1,
                 &mut notes,
             )
@@ -1526,7 +1647,118 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(job.state, want, "ran={ran} {notes:?}");
+            // ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 같은 커밋에 그 노드 앞 서명 통지가 남는다 · 처분은 Job 이 간 곳대로
+            let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+            let notices =
+                crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID).unwrap();
+            assert_eq!(notices.len(), 1, "ran={ran} {notes:?}");
+            let notice = &notices[0];
+            assert_eq!(
+                (
+                    notice.job_id.as_str(),
+                    notice.attempt_id.as_str(),
+                    notice.lease_id.as_str()
+                ),
+                (JOB_ID, ATTEMPT_ID, LEASE_ID)
+            );
+            assert_eq!(notice.cause, pb::SupersedeCause::NodeLost as i32);
+            assert_eq!(
+                notice.job_disposition,
+                if ran {
+                    pb::SupersedeJobDisposition::Failed as i32
+                } else {
+                    pb::SupersedeJobDisposition::Requeued as i32
+                }
+            );
+            assert_eq!(notice.decided_at_unix_ms, lease.expires_at_unix_ms + 1);
+            gputeer_protocol::mailbox_rules::validate_supersede_notice(notice, NODE_ID).unwrap();
+            assert!(!notice.coordinator_signature.is_empty());
+            // 다시 돌려도 통지를 하나 더 만들지 않는다(그 시도는 이미 넘어갔다)
+            crate::failover::failover_lost_attempts(
+                &fixture.path,
+                &policy,
+                &crate::supersede_notice_store::test_signer(),
+                lease.expires_at_unix_ms + 2,
+                &mut notes,
+            )
+            .unwrap();
+            assert_eq!(
+                crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID)
+                    .unwrap()
+                    .len(),
+                1
+            );
         }
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 규칙 1) — 서명 통지를 쓰지 못하면 폐기도 하지 않는다(같은 커밋). 같은 notice_id 에 다른 내용을
+    ///   미리 넣어 통지 쓰기를 실패시키면, Job 은 그대로 RUNNING · 옛 Lease 는 폐기되지 않은 채로 남는다.
+    #[test]
+    fn a_failover_whose_notice_cannot_be_stored_changes_nothing() {
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        let attempt = crate::staging_store::fetch_attempt(&connection, ATTEMPT_ID)
+            .unwrap()
+            .unwrap();
+        // 이어갈 체크포인트가 없는 RUNNING 이라 실제 처분은 FAILED — 같은 ID 로 REQUEUED 를 먼저 넣어 둔다
+        let conflicting = crate::supersede_notice_store::sign_notice(
+            &crate::supersede_notice_store::test_signer(),
+            &crate::supersede_notice_store::SupersededAttempt {
+                job_id: JOB_ID.into(),
+                attempt_id: ATTEMPT_ID.into(),
+                node_id: NODE_ID.into(),
+                fence_epoch: attempt.fence_epoch,
+                lease_id: LEASE_ID.into(),
+                cause: pb::SupersedeCause::NodeLost,
+                job_disposition: pb::SupersedeJobDisposition::Requeued,
+                decided_at_unix_ms: 1,
+            },
+        );
+        assert_eq!(
+            crate::supersede_notice_store::record_within(&connection, &conflicting),
+            Ok(true)
+        );
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let error = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            &crate::supersede_notice_store::test_signer(),
+            lease.expires_at_unix_ms + 1,
+            &mut notes,
+        )
+        .expect_err("통지를 못 썼는데 장애 판정이 성공했다");
+        assert!(error.contains("SUPERSEDE_NOTICE_CONFLICT"), "{error}");
+        let job = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Running, "폐기가 되돌려지지 않았다");
+        let after = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.revoked_at_unix_ms, None,
+            "통지 없이 Lease 가 폐기됐다"
+        );
+        assert_eq!(
+            crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID).unwrap(),
+            vec![conflicting],
+            "통지가 바뀌었다"
+        );
     }
 
     /// 결함 227 (검수 76) — 장애 판정이 옛 Lease 를 같은 커밋에서 폐기한다. 판정 **전에** 시각을 잡은 늦은 갱신도
@@ -1549,6 +1781,7 @@ mod tests {
         let outcomes = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 1,
             &mut notes,
         )
@@ -1590,6 +1823,7 @@ mod tests {
         let early = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 30_000,
             &mut notes,
         )
@@ -1601,6 +1835,7 @@ mod tests {
         let late = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 30_001,
             &mut notes,
         )
@@ -1613,6 +1848,91 @@ mod tests {
                 .raise_reassignment_grace(LEASE_ID, 60_000),
             Err(crate::lease_store::LeaseStoreError::Revoked { .. })
         ));
+    }
+
+    /// ★ 2026-10-01 (관문 5 ⑦ — 사람 대신 기계 증거) — 끊긴 노드가 끊김 시한에 **스스로 멈추고**(종료를 관측했다) 장애 이어받기 뒤 다시 붙어
+    ///   늦은 "중단됨" 보고를 보내면, 그 보고 하나로 옛 예약이 풀린다 — 운영자 `release-lost-node` 가 필요 없다. 이어받은 Job 은 건드리지 않는다.
+    #[test]
+    fn a_late_observed_stop_after_failover_releases_the_lost_node_without_an_operator() {
+        use crate::reservation_release::ArtifactDurabilityGuard;
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let outcomes = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            &crate::supersede_notice_store::test_signer(),
+            lease.expires_at_unix_ms + 1,
+            &mut notes,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 1, "{notes:?}");
+        let held = CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_node_reservation(NODE_ID)
+            .unwrap()
+            .expect("장애 이어받기는 옛 예약을 지우지 않고 표시만 한다");
+        assert!(held.expired_at_unix_ms.is_some());
+        let job_after_failover = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap()
+            .state;
+
+        // 옛 노드가 돌아와 "끊김 시한에 스스로 멈췄다"(종료 관측)를 보낸다
+        let interrupted = verified_custom(
+            observed_exit(base_report(2, pb::AttemptOutcome::Interrupted)),
+            7,
+        );
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let result = store
+            .store_verified_terminal_report_with(
+                &interrupted,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    lease.expires_at_unix_ms + 5_000,
+                )),
+                None,
+            )
+            .unwrap();
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|line| line.starts_with("RESERVATION_RELEASED")),
+            "늦은 정지 보고가 옛 예약을 풀지 않았다: {:?}",
+            result.notes
+        );
+        drop(store);
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_node_reservation(NODE_ID)
+                .unwrap(),
+            None,
+            "옛 노드가 여전히 묶여 있다 — 사람이 풀어야 한다"
+        );
+        assert_eq!(
+            CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap()
+                .state,
+            job_after_failover,
+            "늦은 옛 보고가 이어받은 Job 의 상태를 바꿨다"
+        );
     }
 
     /// 옛 시도의 늦은 보고는 **새 시도의 Job 을 끝내지 않는다.**

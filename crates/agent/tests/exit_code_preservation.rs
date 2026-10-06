@@ -35,6 +35,7 @@ fn run(code_arg: &str) -> ExitObserved {
         cgroup_parent: None,
         container: gputeer_agent::container::ContainerDecision::Host,
         allow_elevated_host: false,
+        on_container_created: None,
     };
     execute(&spec, policy)
         .unwrap_or_else(|e| panic!("exit {code_arg} 를 실행하지 못했다: {e}"))
@@ -97,6 +98,7 @@ fn a_host_workload_is_refused_only_when_the_agent_token_is_elevated() {
         cgroup_parent: None,
         container: gputeer_agent::container::ContainerDecision::Host,
         allow_elevated_host: false,
+        on_container_created: None,
     };
     let result = execute(&spec, policy);
     if elevated {

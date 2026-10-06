@@ -35,6 +35,8 @@
 //! ```text
 //! 옛 노드 멈추기      못 한다. 그 노드가 살아 있으면 계속 돌 수 있다 — 옛 Lease 를 되돌리는 같은 커밋에서 **폐기**해
 //!                     그 뒤의 갱신을 거부할 뿐이다(§0.4 — 억제이지 방지가 아니다). PURE 작업을 전제한다
+//!                     ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 같은 커밋에 **서명된 "그 시도는 폐기됐다" 통지**를 영속한다. 갱신을 그만둔
+//!                       노드도 다시 붙으면 우편함에서 받아 멈춘다(배달 · 처리는 다음 조각). 서명 키 없이는 폐기하지 않는다(인자가 필수다)
 //!                     ★ 결함 227(검수 76) — 전에는 "새 시도의 더 큰 fence 가 옛 Lease 갱신을 막는다" 고 적었는데, 옛 Lease 갱신은
 //!                       자기 행의 fence 만 봐서 막히지 않았다. 판정 직전에 시작된 갱신이 옛 Lease 를 되살릴 수 있었다
 //! 옛 예약 풀기        풀지 않는다. 만료 **표시**만 한다(§A1 4a). 그 노드는 운영자가 멈췄음을 확인하고 풀 때까지 새 일을
@@ -115,6 +117,7 @@ impl FailoverOutcome {
 pub fn failover_lost_attempts(
     control_db: &Path,
     policy: &FailoverPolicy,
+    notice_signer: &crate::supersede_notice_store::NoticeSigner,
     now_unix_ms: u64,
     notes: &mut Vec<String>,
 ) -> Result<Vec<FailoverOutcome>, String> {
@@ -125,6 +128,8 @@ pub fn failover_lost_attempts(
     connection
         .busy_timeout(std::time::Duration::from_secs(1))
         .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 13:11 (조각 7b) — D6 이 UNREPORTED 보류를 쓰므로 보류 표를 준비한다.
+    crate::job_holds::initialize_schema(&connection)?;
 
     let candidates =
         crate::job_store::list_in_run_states(&connection).map_err(|e| e.to_string())?;
@@ -167,6 +172,17 @@ pub fn failover_lost_attempts(
         ) {
             continue;
         }
+        // ★ 2026-10-03 12:26 (조각 6b · 계약 §2 "새 시도를 만들지 않는다" 순서 A · §9 NODE_LOST · STAGING_NODE_LOST guard) — 잠금 뒤 다시 읽은 시도가
+        //   RUN_UNKNOWN 이거나 Job 에 재배치 차단 보류가 있으면 되돌리지 않는다(사유를 남긴다). 아무것도 쓰지 않았으니 트랜잭션은 되돌아간다.
+        if attempt.state == AttemptState::RunUnknown
+            || crate::job_holds::job_is_held(&transaction, &job.job_id)?
+        {
+            notes.push(format!(
+                "FAILOVER_HELD job_id={} attempt_id={attempt_id} attempt_state={:?} — 실행 여부 불명 보류가 있어 되돌리지 않는다(STOP_CONFIRMED · 운영자 해제가 푼다)",
+                job.job_id, attempt.state
+            ));
+            continue;
+        }
         let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("시도 {attempt_id} 의 Lease {} 가 없다", attempt.lease_id))?;
@@ -177,6 +193,40 @@ pub fn failover_lost_attempts(
             continue;
         }
         let lost_node_id = attempt.node_ids.first().cloned().unwrap_or_default();
+        // ★ 검수 mbc1 ① — 통지를 보낼 노드가 없으면 폐기도 하지 않는다(규칙 1 — 폐기와 같은 커밋에 서명 통지). 아무것도 쓰기 전이라
+        //   트랜잭션을 그냥 놓으면 되돌아간다. 노드 없는 시도는 저장소 손상이다 — 조용히 넘기지 않고 남긴다.
+        if lost_node_id.is_empty() {
+            notes.push(format!(
+                "FAILOVER_SKIPPED_NO_NODE job_id={} attempt_id={attempt_id} — 시도에 노드가 없어 통지를 보낼 곳이 없다. 폐기하지 않았다(저장소 손상 의심)",
+                job.job_id
+            ));
+            continue;
+        }
+        // ★ 2026-10-03 13:11 (실행 알림 계약 v18k §9 UNREPORTED_RISK_HELD · D6 · 계획 조각 7b) — 알림 없이 Lease 만 끝났다. 서명이 검증된 선언이 **정확히 PURE** 가
+        //   아니면(IDEMPOTENT · SIDE_EFFECTING · 누락 · 모르는 값 · 옛 DB) 자동으로 이어가지 않고 UNREPORTED 보류를 건다 — 이 호출에서 NODE_LOST ·
+        //   STAGING_NODE_LOST 는 실행하지 않는다(Lease · 예약 · Job 그대로). 그 시도에 운영자 override(release-held-job 이 푼 시도)가 있으면 기존대로
+        //   이어받는다(b9 ①). 같은 시도의 보류 행이 이미 있으면 위 보류 검사가 먼저 건너뛴다(두 번째 호출이 행을 더 만들지 않는다).
+        //   ★ 선언이지 행동의 강제가 아니다 — PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4 · 계약 b11 ④). 보류는 시간으로 풀지 않는다.
+        if !crate::job_store::side_effect_is_pure(&transaction, &job.job_id)?
+            && !crate::job_holds::attempt_has_override(&transaction, &attempt_id)?
+        {
+            let class = crate::job_store::side_effect_class_of(&transaction, &job.job_id)?
+                .unwrap_or_else(|| "선언 없음(SIDE_EFFECTING 취급)".to_string());
+            crate::job_holds::install_unreported_hold(
+                &transaction,
+                &job.job_id,
+                &attempt_id,
+                &format!("알림 없이 Lease 만료 + grace 경과 · 부작용 등급 {class}"),
+                now_unix_ms,
+            )?;
+            transaction.commit().map_err(|e| e.to_string())?;
+            notes.push(format!(
+                "FAILOVER_UNREPORTED_HELD job_id={} attempt_id={attempt_id} node_id={lost_node_id} side_effect_class={class} — 노드가 알리지 못한 채 끊겼다. \
+                 부작용이 있다고 선언된 작업이라 자동으로 이어가지 않는다(사람이 그 PC 를 확인하고 release-held-job 으로 푼다)",
+                job.job_id
+            ));
+            continue;
+        }
         let resume = if job.state == JobState::Running {
             find_resume_point(&transaction, policy, &job.job_id, now_unix_ms, notes, false)?
         } else {
@@ -194,7 +244,7 @@ pub fn failover_lost_attempts(
         //   갱신 저장은 자기 트랜잭션 안에서 폐기를 다시 읽으므로, 이 커밋 뒤의 갱신은 전부 REVOKED 로 거부된다.
         crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
             .map_err(|e| e.to_string())?;
-        if !lost_node_id.is_empty() {
+        {
             // 표시만 한다 — 지우지 않는다(§A1 4a).
             crate::staging_store::mark_reservation_expired(
                 &transaction,
@@ -202,6 +252,25 @@ pub fn failover_lost_attempts(
                 now_unix_ms,
             )
             .map_err(|e| e.to_string())?;
+            // ★ 2026-10-02 (대체 통지 우편함 v3 §3 · 규칙 1) — 폐기와 **같은 커밋**에 서명된 통지 바이트까지 쓴다. 실패하면 폐기도 되돌린다.
+            let notice = crate::supersede_notice_store::sign_notice(
+                notice_signer,
+                &crate::supersede_notice_store::SupersededAttempt {
+                    job_id: job.job_id.clone(),
+                    attempt_id: attempt_id.clone(),
+                    node_id: lost_node_id.clone(),
+                    fence_epoch: attempt.fence_epoch,
+                    lease_id: attempt.lease_id.clone(),
+                    cause: pb::SupersedeCause::NodeLost,
+                    job_disposition: if updated.state == JobState::Queued {
+                        pb::SupersedeJobDisposition::Requeued
+                    } else {
+                        pb::SupersedeJobDisposition::Failed
+                    },
+                    decided_at_unix_ms: now_unix_ms,
+                },
+            );
+            crate::supersede_notice_store::record_within(&transaction, &notice)?;
         }
         transaction.commit().map_err(|e| e.to_string())?;
         outcomes.push(if updated.state == JobState::Queued {
@@ -222,6 +291,17 @@ pub fn failover_lost_attempts(
         });
     }
     Ok(outcomes)
+}
+
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f) — 정지 확인 처리(`run_notice_store`)가 쓰는 이어갈 지점 찾기. 장애 이어받기와 **같은** 탐색 · 검증이다.
+pub(crate) fn resume_body_for(
+    connection: &Connection,
+    policy: &FailoverPolicy,
+    job_id: &str,
+    now_unix_ms: u64,
+    notes: &mut Vec<String>,
+) -> Result<Option<Vec<u8>>, String> {
+    Ok(find_resume_point(connection, policy, job_id, now_unix_ms, notes, false)?.map(|point| point.body))
 }
 
 struct ResumePoint {
@@ -249,6 +329,35 @@ fn find_resume_point(
         keyring.insert(id.clone(), *key);
     }
     let verifier = Ed25519Verifier::new(&keyring);
+    // ★ 2026-10-04 15:47 (실행 알림 계약 D6 보강 · 계획 §5 4번) — 더 높은 fence 의 시도가 생긴 뒤에는 옛 시도의 체크포인트를 재개 후보로 올리지 않는다.
+    //   이어받은 뒤에도 옛 노드가 공유 저장소에 계속 쓸 수 있다(쓰기 자체는 막지 못한다 — 저장소에 fence 관문이 없다). 그 파일이 옛 시도의 서명 ·
+    //   fence 와 맞으니 전에는 새 시도가 체크포인트를 내기 전 다음 이어받기에서 더 높은 step 으로 뽑혔다 — 새 시도가 시작한 지점과 갈라진 이력이다.
+    //   그래서 후보는 ① Job 의 최고 fence 시도가 낸 것 ② 지금 시도가 이어받은 기준 지점(Job 에 저장된 바로 그 바이트) 둘뿐이다.
+    let top_fence: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT fence_epoch FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let top_fence = top_fence
+        .map(|bytes| {
+            <[u8; 8]>::try_from(bytes.as_slice())
+                .map(u64::from_be_bytes)
+                .map_err(|_| format!("job {job_id} 의 시도 fence 를 읽지 못했다"))
+        })
+        .transpose()?;
+    let carried: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT resume_checkpoint FROM coordinator_jobs WHERE job_id = ?1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
     let mut best: Option<(u64, u64, ResumePoint)> = None;
     // ★ 2026-09-24 (결함 254 · 재검수 83) — "공유 저장소 목록을 못 읽었다" 만 호출자가 원하면 "지점 없음" 으로 받는다(선점 — 보고를 롤백하지
     //   않으려고). control DB 오류는 그대로 올린다 — 전에는 선점 쪽이 **모든** 오류를 삼켜 DB 손상까지 "지점 없음" 으로 커밋했다.
@@ -305,6 +414,10 @@ fn find_resume_point(
             skip("그 시도의 fence · 노드와 서명된 값이 다르다".into());
             continue;
         }
+        if top_fence.is_some_and(|top| top > manifest.fence_epoch) && carried.as_deref() != Some(body.as_slice()) {
+            skip("더 높은 fence 의 시도가 있다 — 옛 시도의 체크포인트는 이어받은 기준 지점만 쓴다(D6)".into());
+            continue;
+        }
         if let Err(error) = gputeer_checkpoint::shared::verify_on_disk(shared_root, &manifest) {
             skip(error);
             continue;
@@ -350,11 +463,25 @@ pub struct OperatorRelease {
 ///   있을 수 있고, 그 예약도 풀린다. 멈춤의 근거는 **운영자 진술**뿐이다(그래서 진술을 남긴다) — Coordinator 는 증명할 수 없다(§0.4).
 ///
 /// 기록은 `coordinator_operator_releases` 에 남는다 — 누가 · 언제 · 무엇을 풀었나. 되돌리지 않는 기록이다.
+/// ★ 2026-10-03 (조각 4b) — 이제는 해제 기록 표(`coordinator_release_facts` + `coordinator_release_evidence` 의 OPERATOR_RELEASE)에 남는다.
+///   옛 표는 감사 원본으로 남고 새로 쓰지 않는다.
 pub fn release_lost_node_by_operator(
     control_db: &Path,
     node_id: &str,
     operator_statement: &str,
     now_unix_ms: u64,
+) -> Result<OperatorRelease, String> {
+    release_lost_node_by_operator_with(control_db, node_id, operator_statement, now_unix_ms, None)
+}
+
+/// ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤) — `failover_grace_ms` 는 취소된 Job 의 **최신 시도** 예약을 풀 때만 쓴다(장애 이어받기의
+///   `--failover-grace-ms` 와 같은 값 — 유예를 지어내지 않으므로 그 경우 없으면 거부한다).
+pub fn release_lost_node_by_operator_with(
+    control_db: &Path,
+    node_id: &str,
+    operator_statement: &str,
+    now_unix_ms: u64,
+    failover_grace_ms: Option<u64>,
 ) -> Result<OperatorRelease, String> {
     if operator_statement.trim().is_empty() {
         return Err("RELEASE_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string());
@@ -364,18 +491,9 @@ pub fn release_lost_node_by_operator(
     connection
         .busy_timeout(std::time::Duration::from_secs(1))
         .map_err(|e| e.to_string())?;
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS coordinator_operator_releases (
-                node_id TEXT NOT NULL,
-                attempt_id TEXT NOT NULL,
-                job_id TEXT NOT NULL,
-                operator_statement TEXT NOT NULL,
-                released_at_unix_ms BLOB NOT NULL,
-                PRIMARY KEY(node_id, attempt_id)
-            );",
-        )
-        .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 (조각 4b) — 해제 기록 표(사실 · 근거)와 옛 기록 이관. 이관이 멈추면(옛 기록의 시도 행 없음 등) 풀지 않는다.
+    crate::reservation_release::initialize_release_schema(&connection)
+        .map_err(|e| format!("RELEASE_REFUSED: 해제 기록 표를 준비하지 못했다 — {e:?}"))?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
@@ -385,6 +503,14 @@ pub fn release_lost_node_by_operator(
     let job = crate::job_store::fetch_job(&transaction, &reservation.job_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("RELEASE_REFUSED: 예약의 Job {} 이 없다", reservation.job_id))?;
+    // ★ 2026-10-03 12:26 (조각 6b · 계약 §2 "새 시도를 만들지 않는다" release-lost-node 줄) — 재배치 차단 보류가 있는 Job 의 예약은 풀지 않는다.
+    //   NOTICE 는 그 시도의 STOP_CONFIRMED 가, UNREPORTED 는 release-held-job(조각 7)이 푼다.
+    if crate::job_holds::job_is_held(&transaction, &job.job_id)? {
+        return Err(format!(
+            "RELEASE_REFUSED: Job {} 에 실행 여부 불명 보류가 있다 — 이 명령으로 풀지 않는다(정지 확인 알림 · release-held-job 이 푼다)",
+            job.job_id
+        ));
+    }
     let latest: Option<String> = transaction
         .query_row(
             "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
@@ -395,9 +521,44 @@ pub fn release_lost_node_by_operator(
         .optional()
         .map_err(|e| e.to_string())?;
     let superseded = latest.as_deref() != Some(reservation.attempt_id.as_str());
+    // ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤ (a)) — 풀리지 않은 불명(시도가 RUN_UNKNOWN · 또는 STOP 으로 해소되지 않은 RUN_UNKNOWN 알림)이 있으면 Job 상태와
+    //   무관하게 풀지 않는다 — RUN_UNKNOWN 은 STOP 만 푼다. 최종 Job 에는 늦은 RUN_UNKNOWN 이 NOTICE 보류를 만들지 않아 위 보류 검사로는 막히지 않았다
+    //   (FAILED · COMPLETED 의 기존 공백도 같이 닫는다 — 더 거부하는 쪽).
+    if crate::run_notice_store::has_unresolved_run_unknown(&transaction, &reservation.attempt_id)? {
+        return Err(format!(
+            "RELEASE_REFUSED: {node_id} 의 예약을 쥔 시도 {} 에 풀리지 않은 실행 여부 불명이 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다",
+            reservation.attempt_id
+        ));
+    }
+    // ★ 계약 v18q ⑤ (b) — 취소된 Job 의 **최신 시도** 예약: 취소가 Lease 를 폐기했어도 노드는 다음 갱신 · 끊김 시한까지 돈다. 장애 이어받기와 같은 식 ·
+    //   같은 경계(지금 > 만료 + max(정책 유예, 서명한 유예))가 지나야 푼다. 운영자 진술은 기록이지 정지 증거가 아니다.
+    if job.state == JobState::Cancelled && !superseded {
+        let Some(policy_grace_ms) = failover_grace_ms else {
+            return Err(format!(
+                "RELEASE_REFUSED: {node_id} 의 예약은 취소된 Job {} 의 최신 시도 것이다 — --failover-grace-ms(장애 이어받기와 같은 값)를 함께 줘야 한다",
+                job.job_id
+            ));
+        };
+        let attempt = crate::staging_store::fetch_attempt(&transaction, &reservation.attempt_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 행이 없다(저장소 손상)", reservation.attempt_id))?;
+        let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 Lease 가 없다", reservation.attempt_id))?;
+        let grace_ms = policy_grace_ms.max(lease.reassignment_grace_ms);
+        let free_after = lease.expires_at_unix_ms.saturating_add(grace_ms);
+        if lease.revoked_at_unix_ms.is_none() || now_unix_ms <= free_after {
+            return Err(format!(
+                "RELEASE_REFUSED: 취소된 Job {} 의 최신 시도 {} 가 아직 돌 수 있다 — Lease 폐기 여부 {} · {free_after} 이후에만 푼다(지금 {now_unix_ms})",
+                job.job_id,
+                reservation.attempt_id,
+                lease.revoked_at_unix_ms.is_some()
+            ));
+        }
+    }
     let job_moved_on = matches!(
         job.state,
-        JobState::Queued | JobState::Completed | JobState::Failed
+        JobState::Queued | JobState::Completed | JobState::Failed | JobState::Cancelled
     );
     if !superseded && !job_moved_on {
         return Err(format!(
@@ -406,43 +567,146 @@ pub fn release_lost_node_by_operator(
             reservation.attempt_id, job.state
         ));
     }
-    transaction
-        .execute(
-            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
-            rusqlite::params![node_id],
-        )
-        .map_err(|e| e.to_string())?;
-    let removed = transaction
-        .execute(
-            "DELETE FROM coordinator_node_reservations WHERE node_id = ?1 AND attempt_id = ?2",
-            rusqlite::params![node_id, reservation.attempt_id],
-        )
-        .map_err(|e| e.to_string())?;
-    if removed != 1 {
-        return Err(format!(
-            "RELEASE_REFUSED: 예약 삭제가 {removed} 행을 지웠다"
-        ));
-    }
-    transaction
-        .execute(
-            "INSERT INTO coordinator_operator_releases(
-                node_id, attempt_id, job_id, operator_statement, released_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                node_id,
-                reservation.attempt_id,
-                reservation.job_id,
-                operator_statement,
-                now_unix_ms.to_be_bytes().to_vec(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 (계약 v18k §3 b16 ③ · 조각 4b) — 판정은 위 그대로, **기록 방식만** 바꿨다: 예약을 지우는 같은 트랜잭션에서
+    //   해제 사실 + OPERATOR_RELEASE 근거(진술 · 노드 · Job · 시도 · fence · 시각의 고정 인코딩)를 쓴다. 옛 `coordinator_operator_releases` 에는
+    //   더 쓰지 않는다(옛 행은 열 때 새 표로 옮긴다). 그래서 늦게 온 정지 확인 · 종료 보고는 "이미 해제됨" 으로 근거만 더한다.
+    let outcome = crate::reservation_release::release_by_operator_within(
+        &transaction,
+        crate::reservation_release::OperatorReleaseCommand::ReleaseLostNode,
+        operator_statement,
+        node_id,
+        &reservation.attempt_id,
+        now_unix_ms,
+    )
+    .map_err(|e| format!("RELEASE_REFUSED: {e:?}"))?;
+    let released = match outcome {
+        crate::reservation_release::ReleaseOutcome::Released(record) => record,
+        // 예약이 그 시도에 남아 있는데 해제 사실이 이미 있다 — 기록이 어긋났다. 예약을 남긴 채 성공이라 하지 않는다.
+        other => {
+            return Err(format!(
+                "RELEASE_REFUSED: {node_id} 의 예약은 남았는데 해제 기록은 이미 있다 — 사람이 봐야 한다({other:?})"
+            ))
+        }
+    };
     transaction.commit().map_err(|e| e.to_string())?;
     Ok(OperatorRelease {
         node_id: node_id.to_string(),
-        attempt_id: reservation.attempt_id,
-        job_id: reservation.job_id,
-        released_gpu_ids: reservation.selected_gpu_ids,
+        attempt_id: released.attempt_id,
+        job_id: released.job_id,
+        released_gpu_ids: released.released_gpu_ids,
+    })
+}
+
+/// ★ 2026-10-03 13:28 (실행 알림 계약 v18k §6 (3) · §9 · 계획 조각 7c) — `release-held-job` 이 푼 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldJobRelease {
+    pub job_id: String,
+    /// 보류를 푼 시도들(시도 순).
+    pub released_attempts: Vec<String>,
+    /// Job 이 최종 상태였다 — 그 시도들의 Lease 를 폐기하고 남은 예약을 지웠다.
+    pub job_final: bool,
+    /// 한 줄 기록들(예약 해제 · 예약 없음 등).
+    pub notes: Vec<String>,
+}
+
+/// ★ 2026-10-03 13:28 (실행 알림 계약 v18k §6 (3) · §9 "release-held-job 한 명령" · 계획 조각 7c) — **사람이 그 PC 를 확인한 뒤** D6 보류(UNREPORTED)를 푼다.
+///
+/// ```text
+/// 거부     진술이 비었다 · Job 이 없다 · NOTICE 보류가 하나라도 있다(그것은 그 시도의 STOP_CONFIRMED 만 푼다) · 풀 UNREPORTED 보류가 없다
+/// 한 커밋  UNREPORTED 행 제거(감사 기록) · 그 시도에 override(다음 failover 가 같은 시도로 다시 보류하지 않고 이어받는다 — b9 ①)
+///          Job 이 최종(COMPLETED · FAILED · CANCELLED · ARCHIVED)이면 그 시도의 Lease 폐기(revoked_at — failover 와 같은 칸) ·
+///          그 시도가 쥔 예약 삭제(해제 사실 + OPERATOR_RELEASE 근거 — release-held-job 명령 이름으로)
+///          최종이 아니면 Job · Lease · 예약은 그대로다 — 다음 장애 이어받기가 기존 행(NODE_LOST · STAGING_NODE_LOST)으로 간다
+/// ```
+/// ★ release-lost-node 의 **판정**은 바꾸지 않는다(계약 — 예약 해제와 Job 해제를 가른다).
+pub fn release_held_job_by_operator(
+    control_db: &Path,
+    job_id: &str,
+    operator_statement: &str,
+    now_unix_ms: u64,
+) -> Result<HeldJobRelease, String> {
+    if operator_statement.trim().is_empty() {
+        return Err("RELEASE_HELD_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string());
+    }
+    crate::job_store::CoordinatorJobStore::open(control_db).map_err(|e| e.to_string())?;
+    crate::staging_store::CoordinatorStagingStore::open(control_db).map_err(|e| e.to_string())?;
+    let mut connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(1))
+        .map_err(|e| e.to_string())?;
+    crate::job_holds::initialize_schema(&connection)?;
+    crate::reservation_release::initialize_release_schema(&connection)
+        .map_err(|e| format!("RELEASE_HELD_REFUSED: 해제 기록 표를 준비하지 못했다 — {e:?}"))?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let job = crate::job_store::fetch_job(&transaction, job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("RELEASE_HELD_REFUSED: Job {job_id} 이 없다"))?;
+    let holds = crate::job_holds::holds_for_job(&transaction, job_id)?;
+    if let Some(notice) = holds.iter().find(|h| h.hold_kind == crate::job_holds::NOTICE_RUN_UNKNOWN) {
+        return Err(format!(
+            "RELEASE_HELD_REFUSED: Job {job_id} 의 시도 {} 에 실행 여부 불명 알림 보류가 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다",
+            notice.attempt_id
+        ));
+    }
+    let attempts: Vec<String> = holds
+        .iter()
+        .filter(|h| h.hold_kind == crate::job_holds::UNREPORTED_SIDE_EFFECT_RISK)
+        .map(|h| h.attempt_id.clone())
+        .collect();
+    if attempts.is_empty() {
+        return Err(format!("RELEASE_HELD_REFUSED: Job {job_id} 에 풀 보류(UNREPORTED)가 없다"));
+    }
+    let job_final = matches!(
+        job.state,
+        JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Archived
+    );
+    let mut notes = Vec::new();
+    for attempt_id in &attempts {
+        crate::job_holds::release_unreported_by_operator(&transaction, job_id, attempt_id, operator_statement, now_unix_ms)?;
+        if !job_final {
+            continue;
+        }
+        let attempt = crate::staging_store::fetch_attempt(&transaction, attempt_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_HELD_REFUSED: 보류된 시도 {attempt_id} 의 행이 없다(저장소 손상)"))?;
+        // ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤ (a)) — UNREPORTED 보류 → 취소 → (관측 못 한 종료 보고) → 늦은 RUN_UNKNOWN: 최종 Job 이라 NOTICE 보류가 없고
+        //   시도 상태도 RUN_UNKNOWN 이 아닐 수 있다. 저장된 알림까지 봐서 풀리지 않은 불명이면 STOP 만 푼다.
+        if crate::run_notice_store::has_unresolved_run_unknown(&transaction, attempt_id)? {
+            return Err(format!(
+                "RELEASE_HELD_REFUSED: 시도 {attempt_id} 에 풀리지 않은 실행 여부 불명이 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다"
+            ));
+        }
+        crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
+            .map_err(|e| format!("RELEASE_HELD_REFUSED: 시도 {attempt_id} 의 Lease 를 폐기하지 못했다 — {e}"))?;
+        let node_id = attempt.node_ids.first().cloned().unwrap_or_default();
+        let reservation = crate::staging_store::fetch_node_reservation(&transaction, &node_id)
+            .map_err(|e| e.to_string())?;
+        match reservation {
+            Some(reservation) if reservation.attempt_id == *attempt_id => {
+                crate::reservation_release::release_by_operator_within(
+                    &transaction,
+                    crate::reservation_release::OperatorReleaseCommand::ReleaseHeldJob,
+                    operator_statement,
+                    &node_id,
+                    attempt_id,
+                    now_unix_ms,
+                )
+                .map_err(|e| format!("RELEASE_HELD_REFUSED: {e:?}"))?;
+                notes.push(format!("RESERVATION_RELEASED node_id={node_id} attempt_id={attempt_id}"));
+            }
+            _ => notes.push(format!(
+                "RESERVATION_ALREADY_GONE node_id={node_id} attempt_id={attempt_id} — 그 시도의 예약이 이미 없다(남의 예약은 건드리지 않는다)"
+            )),
+        }
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(HeldJobRelease {
+        job_id: job_id.to_string(),
+        released_attempts: attempts,
+        job_final,
+        notes,
     })
 }
 

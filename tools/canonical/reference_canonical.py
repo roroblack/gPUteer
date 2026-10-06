@@ -316,6 +316,53 @@ SCHEMAS = {
         (90, "node_signature", "bytes", None),
     ],
     # 결함 131 (2026-09-23) — Coordinator 가 서명하는 ACK 수신 확인
+    # ★ 2026-10-02 — 대체 통지 우편함 v3 §1
+    "SupersedeNotice": [
+        (1, "schema_version", "uint", None),
+        (2, "notice_id", "string", None),
+        (3, "job_id", "string", None),
+        (4, "attempt_id", "string", None),
+        (5, "node_id", "string", None),
+        (6, "fence_epoch", "uint", None),
+        (7, "lease_id", "string", None),
+        (8, "cause", "enum", None),
+        (9, "job_disposition", "enum", None),
+        (10, "decided_at_unix_ms", "uint", None),
+        (11, "coordinator_id", "string", None),
+        (12, "issued_at_unix_ms", "uint", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
+    "MailboxDelivery": [
+        (1, "schema_version", "uint", None),
+        (2, "node_id", "string", None),
+        (3, "notices", "repeated_message", "SupersedeNotice"),
+        (4, "coordinator_id", "string", None),
+        (5, "issued_at_unix_ms", "uint", None),
+        (6, "session_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
+    "SupersedeHandled": [
+        (1, "notice_id", "string", None),
+        (2, "notice_hash", "message", "Digest"),
+        (3, "action", "enum", None),
+    ],
+    "MailboxAck": [
+        (1, "schema_version", "uint", None),
+        (2, "node_id", "string", None),
+        (3, "handled", "repeated_message", "SupersedeHandled"),
+        (4, "issued_at_unix_ms", "uint", None),
+        (5, "session_nonce", "bytes", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "MailboxAckReceipt": [
+        (1, "schema_version", "uint", None),
+        (2, "node_id", "string", None),
+        (3, "accepted", "repeated_string", None),
+        (4, "coordinator_id", "string", None),
+        (5, "issued_at_unix_ms", "uint", None),
+        (6, "session_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
     "GrantAckReceipt": [
         (1, "schema_version", "uint", None),
         (2, "grant_id", "string", None),
@@ -339,6 +386,37 @@ SCHEMAS = {
         (8, "coordinator_id", "string", None),
         (9, "issued_at_unix_ms", "uint", None),
         (10, "session_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
+    # ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1
+    "AttemptRunNotice": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (6, "kind", "enum", None),
+        (7, "origin", "enum", None),
+        (8, "reason", "enum", None),
+        (9, "stop_evidence", "enum", None),
+        (10, "sequence", "uint", None),
+        (11, "observed_at_unix_ms", "uint", None),
+        (12, "issued_at_unix_ms", "uint", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "AttemptRunNoticeAck": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (6, "notice_hash", "message", "Digest"),
+        (7, "kind", "enum", None),
+        (8, "sequence", "uint", None),
+        (9, "created", "bool", None),
+        (10, "coordinator_id", "string", None),
+        (11, "issued_at_unix_ms", "uint", None),
+        (12, "session_nonce", "bytes", None),
         (90, "coordinator_signature", "bytes", None),
     ],
     "CanonicalDecision": [
@@ -743,6 +821,12 @@ DOMAIN_TAGS = {
     "AttemptReport": b"gputeer/v1/attempt-report",
     "AttemptReportAck": b"gputeer/v1/attempt-report-ack",
     "GrantAckReceipt": b"gputeer/v1/grant-ack-receipt",
+    "AttemptRunNotice": b"gputeer/v1/attempt-run-notice",
+    "AttemptRunNoticeAck": b"gputeer/v1/attempt-run-ack",
+    "SupersedeNotice": b"gputeer/v1/supersede-notice",
+    "MailboxDelivery": b"gputeer/v1/mailbox-delivery",
+    "MailboxAck": b"gputeer/v1/mailbox-ack",
+    "MailboxAckReceipt": b"gputeer/v1/mailbox-receipt",
     "CanonicalDecision": b"gputeer/v1/canonical",
     "Genesis": b"gputeer/v1/genesis",
     # ★ ADR-028 (2026-08-16) — membership/policy/quarantine 3종을 9종으로 분리.
@@ -2002,6 +2086,186 @@ def build_vectors():
                "Lease", _lease_v2(0),
                ["MUST_DIFFER:v46_lease_v2_reassignment_grace"])
     assert c_l3 != c_l1
+
+    # 47. ★ 실행 알림 · 그 응답(실행 여부 불명 계약 v17 §1, 2026-10-01)
+    _notice_unknown = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "kind": 1,
+        "origin": 2,
+        "reason": 1,
+        "sequence": 1,
+        "observed_at_unix_ms": 1_755_104_500_000,
+        "issued_at_unix_ms": 1_755_104_500_100,
+        "node_signature": b"N" * 64,
+    }
+    c_n1 = add("v47_attempt_run_notice_run_unknown",
+               "AttemptRunNotice RUN_UNKNOWN — RUNNING 에서 종료를 관측하지 못했다(순번 1)",
+               "AttemptRunNotice", _notice_unknown)
+    _notice_stop = dict(_notice_unknown)
+    _notice_stop.update({"kind": 2, "origin": 0, "reason": 0, "stop_evidence": 1, "sequence": 2,
+                         "observed_at_unix_ms": 1_755_104_600_000, "issued_at_unix_ms": 1_755_104_600_100})
+    c_n2 = add("v47b_attempt_run_notice_stop_confirmed",
+               "AttemptRunNotice STOP_CONFIRMED — 컨테이너 부재를 확인했다(순번 2)",
+               "AttemptRunNotice", _notice_stop,
+               ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
+    assert c_n1 != c_n2
+    _v47b_hash = blake3_256(sig_input("AttemptRunNotice", 1, c_n2))
+    assert _v47b_hash is not None, "blake3 가 없으면 v48 의 notice_hash 를 계약대로 만들 수 없다 — pip install blake3"
+    _notice_seq = dict(_notice_unknown)
+    _notice_seq["sequence"] = 3
+    c_n3 = add("v47c_attempt_run_notice_sequence_changed",
+               "v47 에서 순번만 바꾼 것 — canonical 이 달라야 한다(멱등 키가 서명에 묶인다)",
+               "AttemptRunNotice", _notice_seq,
+               ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
+    assert c_n3 != c_n1
+    # ★ 2026-10-03 계약 v18 §4 — 소유자 진술 해제(stop_evidence = 2)
+    _notice_attested = dict(_notice_stop)
+    _notice_attested["stop_evidence"] = 2
+    c_n4 = add("v47d_attempt_run_notice_stop_owner_attested",
+               "v47b 에서 정지 증거만 소유자 진술(2)로 — canonical 이 달라야 한다(증거 종류가 서명에 묶인다)",
+               "AttemptRunNotice", _notice_attested,
+               ["MUST_DIFFER:v47b_attempt_run_notice_stop_confirmed"])
+    assert c_n4 != c_n2
+    _notice_ack = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        # ★ 검수 rn1 — 계약의 관계 그대로: v47b(같은 시도 · 종류 · 순번의 STOP_CONFIRMED)의 서명 입력 BLAKE3-256.
+        "notice_hash": {"algo": 1, "value": bytes.fromhex(_v47b_hash)},
+        "kind": 2,
+        "sequence": 2,
+        "created": True,
+        "coordinator_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_600_200,
+        "session_nonce": bytes(range(80, 96)),
+        "coordinator_signature": b"K" * 64,
+    }
+    c_a1 = add("v48_attempt_run_notice_ack", "AttemptRunNoticeAck — STOP_CONFIRMED 첫 저장",
+               "AttemptRunNoticeAck", _notice_ack)
+    _notice_ack_replay = dict(_notice_ack)
+    _notice_ack_replay["created"] = False
+    c_a2 = add("v48b_attempt_run_notice_ack_replay_created_false",
+               "같은 알림의 재전송 응답(created=false) — canonical 이 달라야 한다",
+               "AttemptRunNoticeAck", _notice_ack_replay,
+               ["MUST_DIFFER:v48_attempt_run_notice_ack"])
+    assert c_a1 != c_a2
+
+    # 49~52. ★ 대체 통지 우편함(2026-10-02 · 제안 v3 §1). notice_id · 답의 notice_hash 는 BLAKE3 로 계산한다 —
+    #   Rust 쪽이 같은 식으로 만든 값이 아니면 canonical 이 갈려 대조가 실패한다(notice_id 계산 벡터를 겸한다).
+    if not HAVE_BLAKE3:
+        raise SystemExit("우편함 벡터는 blake3 가 있어야 만든다(notice_id · notice_hash)")
+
+    def _notice_id(attempt_id, node_id, fence_epoch):
+        a = attempt_id.encode("utf-8")
+        n = node_id.encode("utf-8")
+        data = (b"gputeer/supersede-notice-id/v1\0" + len(a).to_bytes(4, "big") + a
+                + len(n).to_bytes(4, "big") + n + fence_epoch.to_bytes(8, "big"))
+        return _blake3.blake3(data).digest(length=32).hex()
+
+    def _notice(attempt_id, fence_epoch, disposition, decided_at):
+        return {
+            "schema_version": 1,
+            "notice_id": _notice_id(attempt_id, "node-1", fence_epoch),
+            "job_id": "01JBXR7Q0000000000000000AA",
+            "attempt_id": attempt_id,
+            "node_id": "node-1",
+            "fence_epoch": fence_epoch,
+            "lease_id": "01JBXLEASE000000000000001",
+            "cause": 1,
+            "job_disposition": disposition,
+            "decided_at_unix_ms": decided_at,
+            "coordinator_id": "coordinator-1",
+            "issued_at_unix_ms": decided_at,
+            "coordinator_signature": b"K" * 64,
+        }
+
+    _sn_a = _notice("01JBXATT00000000000000001", 42, 1, 1_755_104_700_000)
+    c_s1 = add("v49_supersede_notice_requeued",
+               "SupersedeNotice NODE_LOST · REQUEUED — notice_id 는 (attempt, node, fence) 의 BLAKE3",
+               "SupersedeNotice", _sn_a)
+    _sn_failed = dict(_sn_a)
+    _sn_failed["job_disposition"] = 2
+    c_s2 = add("v49b_supersede_notice_failed",
+               "v49 에서 처분만 FAILED 로 — canonical 이 달라야 한다",
+               "SupersedeNotice", _sn_failed,
+               ["MUST_DIFFER:v49_supersede_notice_requeued"])
+    assert c_s1 != c_s2
+    _sn_fence = _notice("01JBXATT00000000000000001", 43, 1, 1_755_104_700_000)
+    c_s3 = add("v49c_supersede_notice_fence_changed",
+               "v49 에서 fence 만 43 으로(notice_id 도 바뀐다) — canonical 이 달라야 한다",
+               "SupersedeNotice", _sn_fence,
+               ["MUST_DIFFER:v49_supersede_notice_requeued"])
+    assert c_s3 != c_s1
+    _sn_b = _notice("01JBXATT00000000000000002", 44, 2, 1_755_104_800_000)
+
+    _delivery = {
+        "schema_version": 1,
+        "node_id": "node-1",
+        "notices": [],
+        "coordinator_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_900_000,
+        "session_nonce": bytes(range(96, 112)),
+        "coordinator_signature": b"K" * 64,
+    }
+    c_d1 = add("v50_mailbox_delivery_empty", "MailboxDelivery — 빈 우편함(지금 미확인 통지가 없다)",
+               "MailboxDelivery", _delivery)
+    _delivery_two = dict(_delivery)
+    _delivery_two["notices"] = [_sn_a, _sn_b]
+    c_d2 = add("v50b_mailbox_delivery_two",
+               "MailboxDelivery — 통지 둘(안의 서명 칸은 규칙 i 로 겉 서명에 묶이지 않는다)",
+               "MailboxDelivery", _delivery_two,
+               ["MUST_DIFFER:v50_mailbox_delivery_empty"])
+    assert c_d1 != c_d2
+
+    def _hash_of(notice):
+        return {"algo": 1, "value": _blake3.blake3(
+            sig_input("SupersedeNotice", 1, canonical_encode("SupersedeNotice", notice))).digest(length=32)}
+
+    _ack = {
+        "schema_version": 1,
+        "node_id": "node-1",
+        "handled": [
+            {"notice_id": _sn_a["notice_id"], "notice_hash": _hash_of(_sn_a), "action": 1},
+            {"notice_id": _sn_b["notice_id"], "notice_hash": _hash_of(_sn_b), "action": 2},
+        ],
+        "issued_at_unix_ms": 1_755_104_900_100,
+        "session_nonce": bytes(range(96, 112)),
+        "node_signature": b"N" * 64,
+    }
+    c_k1 = add("v51_mailbox_ack", "MailboxAck — 하나는 STOPPED · 하나는 NOT_RUNNING(통지 해시 = BLAKE3(sig_input))",
+               "MailboxAck", _ack)
+    _ack_swapped = dict(_ack)
+    _ack_swapped["handled"] = [dict(_ack["handled"][0], action=2), _ack["handled"][1]]
+    c_k2 = add("v51b_mailbox_ack_action_changed",
+               "v51 에서 첫 처리 결과만 NOT_RUNNING 으로 — canonical 이 달라야 한다",
+               "MailboxAck", _ack_swapped,
+               ["MUST_DIFFER:v51_mailbox_ack"])
+    assert c_k1 != c_k2
+
+    _receipt = {
+        "schema_version": 1,
+        "node_id": "node-1",
+        "accepted": [_sn_a["notice_id"], _sn_b["notice_id"]],
+        "coordinator_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_900_200,
+        "session_nonce": bytes(range(96, 112)),
+        "coordinator_signature": b"K" * 64,
+    }
+    c_r1 = add("v52_mailbox_ack_receipt", "MailboxAckReceipt — 두 답을 모두 받아들여 커밋했다",
+               "MailboxAckReceipt", _receipt)
+    _receipt_one = dict(_receipt)
+    _receipt_one["accepted"] = [_sn_a["notice_id"]]
+    c_r2 = add("v52b_mailbox_ack_receipt_one",
+               "v52 에서 하나만 받아들인 것 — canonical 이 달라야 한다",
+               "MailboxAckReceipt", _receipt_one,
+               ["MUST_DIFFER:v52_mailbox_ack_receipt"])
+    assert c_r1 != c_r2
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

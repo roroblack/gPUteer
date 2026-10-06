@@ -280,8 +280,16 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `ResumeLeaseResult` | `gputeer/v1/lease-resume-result` |
 | `AttemptReportAck` | `gputeer/v1/attempt-report-ack` |
 | `GrantAckReceipt` | `gputeer/v1/grant-ack-receipt` |
+| `AttemptRunNotice` | `gputeer/v1/attempt-run-notice` |
+| `AttemptRunNoticeAck` | `gputeer/v1/attempt-run-ack` |
+| `SupersedeNotice` | `gputeer/v1/supersede-notice` |
+| `MailboxDelivery` | `gputeer/v1/mailbox-delivery` |
+| `MailboxAck` | `gputeer/v1/mailbox-ack` |
+| `MailboxAckReceipt` | `gputeer/v1/mailbox-receipt` |
 
-**총 32종.** ★ 2026-09-23 결함 131 의 `GrantAckReceipt`(Coordinator 가 ACK 를 검증 · 기록한 뒤에만 서명하는 수신 확인)가 더해졌다 —
+**총 38종.** ★ 2026-10-02 대체 통지 우편함 v3(`docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md`)의 `SupersedeNotice`(Coordinator 서명 · Evidence — 관측 시각은 폐기를 커밋한 `decided_at_unix_ms` · 재전달은 소비 측 멱등 키 notice_id) · `MailboxDelivery` · `MailboxAck` · `MailboxAckReceipt`(셋 다 ShortLived — 만료 발급 + GRANT_TTL_MS · MAILBOX 세션 Hello nonce echo)가 더해졌다. 배달 안의 통지는 규칙 i 로 서명 칸이 겉 서명에 묶이지 않아 **따로** 검증한다. ★ 2026-10-01 실행 여부 불명 계약 v17(`docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md`)의 `AttemptRunNotice`(노드 서명 ·
+Evidence — 재전송은 소비 측 멱등 키 (attempt_id, node_id, sequence) 가 거른다)와 `AttemptRunNoticeAck`(Coordinator 서명 · ShortLived — REPORT 세션 Hello nonce echo)가
+더해졌다. 응답 tag 는 32바이트 고정 때문에 `-notice-ack` 가 아니라 `attempt-run-ack` 다(계약 검수 b8 ①). ★ 2026-09-23 결함 131 의 `GrantAckReceipt`(Coordinator 가 ACK 를 검증 · 기록한 뒤에만 서명하는 수신 확인)가 더해졌다 —
 `AgentGrantAck`(Agent 서명)와 tag 를 공유하지 않는다. 제안 `docs/contracts/proposals/2026-09-23_2020_ACK_수신_확인.md`. ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
 `policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
 사유는 §5.1. `AgentGrantAck` 는 coordinator/agent 최소 핸드셰이크

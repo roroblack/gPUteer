@@ -35,8 +35,10 @@ impl JobStateDb for JobState {
 }
 
 /// 이 저장소가 **쓰는** 상태만 읽는다. 표에는 있지만 이 저장소가 최종 상태로 쓰지 않는 상태
-/// (INTERRUPTED · REPLANNING · RECONCILING · CANCELLED · ARCHIVED)가 DB 에 있으면 손상이다 —
+/// (INTERRUPTED · REPLANNING · RECONCILING · ARCHIVED)가 DB 에 있으면 손상이다 —
 /// 그 상태들은 판정 순간에만 거친다(코덱스 72 결정 C, Attempt 와 같다).
+/// ★ 2026-10-05 02:21 (실행 알림 계약 v18q ④ ⑦ · 계획 §5 5번) — CANCELLED 는 운영자 취소(`cancel-job`)가 **쓰므로** 읽는다. 전에는 손상으로 거부해,
+///   취소된 Job 의 늦은 종료 보고 · 정지 알림 · 상태 화면이 전부 실패했을 것이다.
 fn parse_job_state(value: &str) -> Result<JobState, JobStoreError> {
     match value {
         "SUBMITTED" => Ok(JobState::Submitted),
@@ -47,6 +49,7 @@ fn parse_job_state(value: &str) -> Result<JobState, JobStoreError> {
         "PAUSED" => Ok(JobState::Paused),
         "COMPLETED" => Ok(JobState::Completed),
         "FAILED" => Ok(JobState::Failed),
+        "CANCELLED" => Ok(JobState::Cancelled),
         other => Err(JobStoreError::CorruptData(format!(
             "unknown job state in durable store: {other}"
         ))),
@@ -395,6 +398,15 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobSt
                 verified_signer_id TEXT NOT NULL,
                 manifest_body BLOB NOT NULL
             );
+
+            -- ★ 2026-10-03 13:01 (실행 알림 계약 v18k §6 (1) · D6 · 계획 조각 7a) — 서명이 검증된 제출자 선언의 부작용 등급 투영.
+            --   Job 행(엄격한 행 모양 검사가 있다)에 칸을 더하지 않고 1:1 표로 둔다. 행이 없으면(옛 DB · Manifest 없는 제출 · 선언 누락 · 모르는 값)
+            --   SIDE_EFFECTING 과 같이 다룬다(보수). 값을 쓰는 곳은 제출 트랜잭션(SUBMISSION)과 권위 디렉터리 재검증(REVERIFIED) 둘뿐이다.
+            CREATE TABLE IF NOT EXISTS coordinator_job_side_effects (
+                job_id TEXT PRIMARY KEY REFERENCES coordinator_jobs(job_id),
+                side_effect_class TEXT NOT NULL CHECK(side_effect_class IN ('PURE', 'IDEMPOTENT', 'SIDE_EFFECTING')),
+                source TEXT NOT NULL CHECK(source IN ('SUBMISSION', 'REVERIFIED'))
+            );
             "#,
         )
         .map_err(map_sql_error)?;
@@ -488,6 +500,37 @@ impl CoordinatorJobStore {
     /// Loads a durable Manifest binding without claiming that its signature is
     /// still valid. Existing hash-only Jobs fail closed with
     /// [`JobStoreError::LegacyManifestMissing`].
+    /// ★ 2026-10-03 13:01 (계약 v18k §6 이관 b12 ⑤ · 조각 7a) — 투영이 비어 있는 Job(옛 DB 등)에 값을 채운다. 저장된 서명 Manifest 를 **지금 신뢰하는 키
+    /// 디렉터리로 다시 검증한** 경우만(`KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller`) — 그 Manifest 가 저장된 것과 같아야 한다
+    /// (다르면 거부). 이미 값이 있으면 그대로 둔다. 쓴(또는 이미 있던) 등급 이름.
+    pub fn project_side_effect_from_reverified(
+        &mut self,
+        job_id: &str,
+        reverified: &Verified<pb::JobManifest>,
+        key_directory: crate::reservation_release::KeyDirectoryProvenance,
+    ) -> Result<Option<String>, JobStoreError> {
+        if key_directory != crate::reservation_release::KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller {
+            return Err(JobStoreError::GuardNotMet(
+                "SIDE_EFFECT_REVERIFY_REFUSED: 권위 있는 키 디렉터리로 다시 검증한 Manifest 만 투영을 채운다",
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+        let job = fetch_job(&transaction, job_id)?.ok_or(JobStoreError::NotFound)?;
+        let binding = fetch_manifest_binding(&transaction, &job)?;
+        if binding.manifest != *reverified.get() || binding.signer_id_at_submission != reverified.signer_id() {
+            return Err(JobStoreError::ManifestIdentityMismatch(
+                "SIDE_EFFECT_REVERIFY_REFUSED: 다시 검증한 Manifest 가 저장된 것과 다르다",
+            ));
+        }
+        project_side_effect(&transaction, job_id, reverified.get().side_effect_class, "REVERIFIED")?;
+        let projected = side_effect_class_of(&transaction, job_id).map_err(JobStoreError::Io)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(projected)
+    }
+
     pub fn get_manifest_binding(
         &self,
         job_id: &str,
@@ -516,6 +559,14 @@ impl CoordinatorJobStore {
             .into_iter()
             .map(RawJobRow::into_stored)
             .collect::<Result<Vec<_>, _>>()?;
+        // ★ 2026-10-03 12:26 (조각 6b · 계약 §9 guard) — 재배치 차단 보류가 있는 Job 은 고르지 않는다. 마지막 관문은 staging 트랜잭션이 다시 본다.
+        let mut held = Vec::new();
+        for job in &jobs {
+            if crate::job_holds::job_is_held(&self.connection, &job.job_id).map_err(JobStoreError::Io)? {
+                held.push(job.job_id.clone());
+            }
+        }
+        jobs.retain(|job| !held.contains(&job.job_id));
         jobs.sort_by(|a, b| {
             (a.queued_at_unix_ms, &a.job_id).cmp(&(b.queued_at_unix_ms, &b.job_id))
         });
@@ -752,6 +803,8 @@ impl CoordinatorJobStore {
             )
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterManifestInsert)?;
+        // ★ 2026-10-03 13:01 (조각 7a · 계약 §6 (1)) — 같은 트랜잭션에서 검증된 선언을 투영한다. 누락 · 모르는 값이면 행을 쓰지 않는다(= SIDE_EFFECTING 취급).
+        project_side_effect(&transaction, &stored.job_id, manifest.side_effect_class, "SUBMISSION")?;
         transaction
             .execute(
                 "INSERT INTO job_submission_idempotency(idempotency_key, job_id) VALUES (?1, ?2)",
@@ -1101,6 +1154,59 @@ fn insert_job(connection: &Connection, stored: &StoredJob) -> Result<(), JobStor
     Ok(())
 }
 
+/// ★ 2026-10-03 13:01 (조각 7a) — 검증된 Manifest 의 `side_effect_class` 를 투영 표에 쓴다. 누락(UNSPECIFIED) · 모르는 값은 쓰지 않는다. 이미 있으면 그대로(멱등 —
+/// 첫 값이 이긴다). 쓴 등급 이름(쓰지 않았으면 None).
+fn project_side_effect(
+    connection: &Connection,
+    job_id: &str,
+    side_effect_class: i32,
+    source: &str,
+) -> Result<Option<&'static str>, JobStoreError> {
+    let name = match pb::SideEffectClass::try_from(side_effect_class) {
+        Ok(pb::SideEffectClass::Pure) => "PURE",
+        Ok(pb::SideEffectClass::Idempotent) => "IDEMPOTENT",
+        Ok(pb::SideEffectClass::SideEffecting) => "SIDE_EFFECTING",
+        _ => return Ok(None),
+    };
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_job_side_effects(job_id, side_effect_class, source) VALUES (?1, ?2, ?3)",
+            rusqlite::params![job_id, name, source],
+        )
+        .map_err(map_sql_error)?;
+    Ok(Some(name))
+}
+
+/// ★ 2026-10-03 13:01 (실행 알림 계약 v18k §6 (2) · D6 · 조각 7a) — 자동 이어받기를 해도 되는 Job 인가: 투영된 선언이 **정확히 PURE** 일 때만 참이다.
+/// 행이 없으면(옛 DB · Manifest 없는 제출 · 누락 · 모르는 값) 거짓 — 표가 아예 없어도 거짓이다(읽기만 하고 표를 만들지 않는다).
+/// ★ 선언이지 행동의 강제가 아니다(CLAUDE.md §0.4) — PURE 로 선언한 작업도 외부 부작용을 낼 수 있다.
+pub fn side_effect_is_pure(connection: &Connection, job_id: &str) -> Result<bool, String> {
+    Ok(side_effect_class_of(connection, job_id)?.as_deref() == Some("PURE"))
+}
+
+/// ★ 2026-10-03 13:01 (조각 7a) — 투영된 부작용 등급 이름(PURE · IDEMPOTENT · SIDE_EFFECTING). 없으면 None(= SIDE_EFFECTING 취급).
+pub fn side_effect_class_of(connection: &Connection, job_id: &str) -> Result<Option<String>, String> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_side_effects'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("SIDE_EFFECT: 표를 확인하지 못했다: {e}"))?;
+    if table.is_none() {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT side_effect_class FROM coordinator_job_side_effects WHERE job_id = ?1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("SIDE_EFFECT: 등급을 읽지 못했다: {e}"))
+}
+
 fn fetch_manifest_binding(
     connection: &Connection,
     job: &StoredJob,
@@ -1268,6 +1374,122 @@ pub(crate) fn requeue_after_node_lost(
         next.run_terminal = Some(RunTerminal::NoCommittedCheckpoint);
         next.worker_reported_finished_at_unix_ms = Some(worker_clock_hint_unix_ms);
     }
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(next)
+}
+
+/// ★ 2026-10-03 04:49 (실행 알림 계약 v18k §3 항목 3 · 계획 조각 4c) — 실행 여부 불명(RUN_UNKNOWN)이던 시도의 **정지가 확인됐을 때** Job 이 갈 곳.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopConfirmedJobEffect {
+    /// `RUNNING · STAGING -> INTERRUPTED(STOP_CONFIRMED_AFTER_UNKNOWN) -> REPLANNING(FAILOVER_STARTED) -> QUEUED(REPLAN_READY)` — 이어갈 체크포인트가 있다.
+    Requeued(StoredJob),
+    /// `RUNNING · STAGING -> INTERRUPTED(STOP_CONFIRMED_AFTER_UNKNOWN) -> FAILED(NO_COMMITTED_CHECKPOINT)` — 없다(D7).
+    FailedNoCheckpoint(StoredJob),
+    /// 그대로 — Job 이 이미 다른 길에 있다(보류만 푼다 · 보류는 조각 6). 아무것도 쓰지 않았다.
+    Unchanged(StoredJob),
+}
+
+/// ★ 2026-10-03 04:49 (계약 v18k §3 항목 3 · §9 새 두 행 · 계획 조각 4c) — 정지 확인 뒤 Job 을 옮긴다. **호출자의 트랜잭션 안에서** 쓰고 커밋은 하지 않는다.
+///
+/// ```text
+/// RUNNING · STAGING   이어갈 지점(resume)이 있으면 큐로 · 없으면 FAILED(NO_COMMITTED_CHECKPOINT)
+///                     ★ STAGING 도 큐로 바로 가지 않는다 — STARTING 에서 온 불명도 "돌았을 수 있다"(D3). 장애 이어받기의
+///                       STAGING_NODE_LOST(큐로 바로)와 다르다
+/// QUEUED · FAILED     그대로 — 장애 이어받기가 먼저 옮겼다(계약 §2 순서 B)
+/// PAUSED              그대로 — 정상 RESUMED 경로로 간다(재개는 새 Lease · 새 시도)
+/// PLANNING            그대로 — 이어받기가 먼저 옮겨 재계획 중이다
+/// COMPLETED           그대로 — 다른 시도가 끝냈다(시도 종결 · 예약 해제는 호출자가 한다)
+/// SUBMITTED           있을 수 없다(시도가 있는데 계획 전) — 손상으로 거부
+/// ```
+/// `resume` 은 호출자가 공유 저장소에서 찾은 **검증된** 마지막 체크포인트다(장애 이어받기와 같은 탐색 — 그 Job 의 체크포인트 전부에서 고른다).
+/// 저장소는 최종 상태만 쓴다 — INTERRUPTED · REPLANNING 은 거쳐 가는 칸이고, 그 경로가 규범 표 안에 있는지만 trigger 까지 대조한다.
+pub fn follow_stop_confirmed(
+    connection: &Connection,
+    job: &StoredJob,
+    resume: Option<Vec<u8>>,
+    worker_clock_hint_unix_ms: u64,
+) -> Result<StopConfirmedJobEffect, JobStoreError> {
+    use gputeer_protocol::job_state::transition_via;
+    let rejected = |rejected: gputeer_protocol::job_state::JobTransitionRejected| {
+        JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        }
+    };
+    match job.state {
+        JobState::Running | JobState::Staging => {}
+        // ★ 2026-10-04 01:27 (검수 s56 ② — Codex) — 최종 상태 CANCELLED · ARCHIVED 도 그대로 둔다(계약 b7 ② — 취소된 Job 은 CANCELLED 그대로 · STOP 은 자원만 푼다).
+        //   전에는 거부해 STOP 커밋 전체가 되돌아가 정지 증거가 와도 자원 해제 · ACK 를 못 했다.
+        JobState::Queued
+        | JobState::Failed
+        | JobState::Paused
+        | JobState::Planning
+        | JobState::Completed
+        | JobState::Cancelled
+        | JobState::Archived
+        // ★ 2026-10-04 01:32 (검수 s45ab ① — Codex · 계약 §3 Job 표 b6 ① · RECONCILING 행) — 순서 B 로 failover 가 먼저 옮긴 INTERRUPTED · REPLANNING 은 진행 중인
+        //   경로를 가고, RECONCILING 은 canonical 선택 경로를 간다 — Job 은 그대로 두고 시도 종결 · Lease 폐기 · 예약 해제만 한다.
+        //   전에는 거부해 STOP 커밋(알림 저장 · 해제까지) 전체가 되돌아갔다.
+        | JobState::Interrupted
+        | JobState::Replanning
+        | JobState::Reconciling => return Ok(StopConfirmedJobEffect::Unchanged(job.clone())),
+        from => {
+            return Err(JobStoreError::InvalidTransition {
+                from,
+                to: JobState::Interrupted,
+            })
+        }
+    }
+    let interrupted = transition_via(job.state, JobState::Interrupted, "STOP_CONFIRMED_AFTER_UNKNOWN")
+        .map_err(rejected)?;
+    let mut next = job.clone();
+    let requeued = resume.is_some();
+    if requeued {
+        let replanning =
+            transition_via(interrupted, JobState::Replanning, "FAILOVER_STARTED").map_err(rejected)?;
+        next.state =
+            transition_via(replanning, JobState::Queued, "REPLAN_READY").map_err(rejected)?;
+        next.staging_at_unix_ms = None;
+        next.running_at_unix_ms = None;
+        next.requeue_count = job
+            .requeue_count
+            .checked_add(1)
+            .ok_or(JobStoreError::CorruptData(
+                "requeue_count overflow".to_string(),
+            ))?;
+        next.resume_checkpoint = resume;
+    } else {
+        next.state = transition_via(interrupted, JobState::Failed, "NO_COMMITTED_CHECKPOINT")
+            .map_err(rejected)?;
+        next.run_terminal = Some(RunTerminal::NoCommittedCheckpoint);
+        next.worker_reported_finished_at_unix_ms = Some(worker_clock_hint_unix_ms);
+    }
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(if requeued {
+        StopConfirmedJobEffect::Requeued(next)
+    } else {
+        StopConfirmedJobEffect::FailedNoCheckpoint(next)
+    })
+}
+
+/// ★ 2026-10-05 02:25 (실행 알림 계약 v18q ② · 계획 §5 5번) — 운영자 취소: 표의 `* -> CANCELLED | USER_CANCELLED` 행만 따른다(COMPLETED · FAILED 등은 거부).
+/// Job 칸은 상태와 revision 만 바꾼다 — 끝난 이유 칸을 쓰지 않는다(v18q ⑦ · 취소 시각 · 진술은 감사 행). Lease · 예약 · 보류는 호출자(`job_cancel`)가 정한다.
+pub(crate) fn cancel_within(connection: &Connection, job: &StoredJob) -> Result<StoredJob, JobStoreError> {
+    let mut next = job.clone();
+    next.state = gputeer_protocol::job_state::transition_via(job.state, JobState::Cancelled, "USER_CANCELLED").map_err(
+        |rejected| JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        },
+    )?;
     next.revision = job
         .revision
         .checked_add(1)
@@ -1782,6 +2004,22 @@ impl RawJobRow {
                     && has_plan
                     && (queue_stage_failure || run_stage_failure)
             }
+            // ★ 계약 v18q ⑦ — 취소는 끝난 이유 칸(run_terminal · queue_failure · failed_at · 노드가 보고한 끝 시각)을 쓰지 않는다(취소 시각 · 진술은
+            //   감사 행 `coordinator_job_cancellations`). 나머지 칸은 취소 전 상태의 모양 그대로다 — SUBMITTED 에서 취소하면 plan 이 없다.
+            //   시각 칸은 앞 단계가 있어야 뒤 단계가 있다(계획 없이 대기열 · 대기열 없이 배정은 손상).
+            JobState::Cancelled => {
+                run_terminal.is_none()
+                    && self.worker_reported_finished_at_unix_ms.is_none()
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none()
+                    && (self.queued_at_unix_ms.is_none() || self.planning_at_unix_ms.is_some())
+                    && (self.staging_at_unix_ms.is_none() || self.queued_at_unix_ms.is_some())
+                    && (self.running_at_unix_ms.is_none() || self.staging_at_unix_ms.is_some())
+                    && (self.queued_at_unix_ms.is_none() || has_plan)
+                    && (self.plan_id.is_none() || has_plan)
+                    // (코드 검수 cancel_code ②) 계획은 대기열에 올릴 때 생긴다 — 계획만 있고 대기열 시각이 없는 모양은 취소 전에도 없었다
+                    && (self.plan_id.is_none() || self.queued_at_unix_ms.is_some())
+            }
             _ => false,
         };
         if !valid_shape {
@@ -1965,6 +2203,79 @@ mod tests {
         store.submit_accepted(submission, 100).unwrap();
         store.start_planning(&submission.job_id, 200).unwrap();
         store.enqueue(&submission.job_id, "plan-1", 300).unwrap()
+    }
+
+    /// ★ 2026-10-03 04:49 (조각 4c) — 큐에 있던 Job 을 저장소 규칙 그대로 STAGING · RUNNING 으로 올려 둔다(스테이징 · 첫 진행 신호가 하는 일의 결과 모양).
+    fn job_in(store: &mut CoordinatorJobStore, job_id: &str, key: u8, state: JobState) -> StoredJob {
+        let mut job = queued(store, &submission(job_id, key));
+        job.state = JobState::Staging;
+        job.staging_at_unix_ms = Some(400);
+        if state == JobState::Running {
+            job.state = JobState::Running;
+            job.running_at_unix_ms = Some(500);
+        }
+        job.revision += 1;
+        update_job(&store.connection, &job).unwrap();
+        fetch_job(&store.connection, job_id).unwrap().unwrap()
+    }
+
+    /// 계약 §3 항목 3 — RUNNING · STAGING 은 이어갈 지점이 있으면 큐로(되돌아온 횟수 +1 · 지점 저장), 없으면 FAILED(NO_COMMITTED_CHECKPOINT).
+    ///   저장된 행은 다시 읽어도 모양 검사를 통과한다.
+    #[test]
+    fn a_stop_after_unknown_requeues_with_a_checkpoint_and_fails_without_one() {
+        for from in [JobState::Running, JobState::Staging] {
+            let (mut store, _dir) = open_temp();
+            let job = job_in(&mut store, "job-a", 1, from);
+            let effect =
+                follow_stop_confirmed(&store.connection, &job, Some(vec![9, 9]), 700).unwrap();
+            let StopConfirmedJobEffect::Requeued(moved) = effect else {
+                panic!("{from:?} 는 큐로 가야 한다: {effect:?}");
+            };
+            let stored = fetch_job(&store.connection, "job-a").unwrap().unwrap();
+            assert_eq!(stored, moved);
+            assert_eq!(stored.state, JobState::Queued);
+            assert_eq!(stored.requeue_count, job.requeue_count + 1);
+            assert_eq!(stored.resume_checkpoint, Some(vec![9, 9]));
+            assert_eq!(stored.staging_at_unix_ms, None);
+            assert_eq!(stored.running_at_unix_ms, None);
+
+            let job = job_in(&mut store, "job-b", 2, from);
+            let effect = follow_stop_confirmed(&store.connection, &job, None, 700).unwrap();
+            let StopConfirmedJobEffect::FailedNoCheckpoint(moved) = effect else {
+                panic!("{from:?} 는 FAILED 여야 한다: {effect:?}");
+            };
+            let stored = fetch_job(&store.connection, "job-b").unwrap().unwrap();
+            assert_eq!(stored, moved);
+            assert_eq!(stored.state, JobState::Failed);
+            assert_eq!(stored.run_terminal, Some(RunTerminal::NoCommittedCheckpoint));
+            assert_eq!(stored.worker_reported_finished_at_unix_ms, Some(700));
+        }
+    }
+
+    /// 이미 다른 길에 있는 Job(장애 이어받기가 먼저 옮김 · 재개 대기 · 다른 시도가 끝냄)은 건드리지 않는다 — 행도 revision 도 그대로다.
+    #[test]
+    fn a_stop_after_unknown_leaves_a_job_that_already_moved_on_unchanged() {
+        let (mut store, _dir) = open_temp();
+        let job = queued(&mut store, &submission("job-q", 1));
+        let mut shapes = vec![job.clone()];
+        let mut paused = job_in(&mut store, "job-p", 2, JobState::Running);
+        paused.state = JobState::Paused;
+        paused.revision += 1;
+        update_job(&store.connection, &paused).unwrap();
+        shapes.push(fetch_job(&store.connection, "job-p").unwrap().unwrap());
+        for job in shapes {
+            assert_eq!(
+                follow_stop_confirmed(&store.connection, &job, Some(vec![1]), 700).unwrap(),
+                StopConfirmedJobEffect::Unchanged(job.clone())
+            );
+            assert_eq!(fetch_job(&store.connection, &job.job_id).unwrap().unwrap(), job);
+        }
+        let mut submitted = job;
+        submitted.state = JobState::Submitted;
+        assert!(matches!(
+            follow_stop_confirmed(&store.connection, &submitted, None, 700),
+            Err(JobStoreError::InvalidTransition { .. })
+        ));
     }
 
     #[test]
@@ -2530,6 +2841,36 @@ mod tests {
         assert_eq!(ids, ["job-a", "job-b", "job-c"]);
     }
 
+    /// 계약 v18q ⑦ — CANCELLED 행은 취소 전 상태의 모양(계획 없음 · 대기열 · 실행 중)을 그대로 읽고, 끝난 이유 칸이 있으면 손상이다. ARCHIVED 는 여전히 손상이다.
+    #[test]
+    fn a_cancelled_row_keeps_its_earlier_shape_and_terminal_fields_are_corrupt() {
+        let (mut store, _dir) = open_temp();
+        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+        queued(&mut store, &submission("job-2", 2));
+        let set = |store: &CoordinatorJobStore, sql: &str| store.connection.execute(sql, []).unwrap();
+        set(&store, "UPDATE coordinator_jobs SET state = 'CANCELLED'");
+        assert_eq!(store.get("job-1").unwrap().unwrap().state, JobState::Cancelled, "계획 없는 SUBMITTED 에서 취소");
+        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "대기열에서 취소");
+        set(&store, "UPDATE coordinator_jobs SET running_at_unix_ms = x'0000000000000190', staging_at_unix_ms = x'0000000000000180' WHERE job_id = 'job-2'");
+        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "실행 중에 취소");
+        for (sql, why) in [
+            ("UPDATE coordinator_jobs SET run_terminal = 'ATTEMPT_COMPLETED' WHERE job_id = 'job-2'", "끝난 이유"),
+            ("UPDATE coordinator_jobs SET failed_at_unix_ms = x'0000000000000190' WHERE job_id = 'job-2'", "실패 시각"),
+            ("UPDATE coordinator_jobs SET staging_at_unix_ms = NULL WHERE job_id = 'job-2'", "배정 없이 실행"),
+            ("UPDATE coordinator_jobs SET plan_id = NULL WHERE job_id = 'job-2'", "계획 없이 대기열"),
+            ("UPDATE coordinator_jobs SET queued_at_unix_ms = NULL, staging_at_unix_ms = NULL, running_at_unix_ms = NULL WHERE job_id = 'job-2'", "대기열 없이 계획"),
+        ] {
+            let (mut fresh, _d) = open_temp();
+            queued(&mut fresh, &submission("job-2", 2));
+            set(&fresh, "UPDATE coordinator_jobs SET state = 'CANCELLED', staging_at_unix_ms = x'0000000000000180', running_at_unix_ms = x'0000000000000190'");
+            assert_eq!(fresh.get("job-2").unwrap().unwrap().state, JobState::Cancelled);
+            set(&fresh, sql);
+            assert!(matches!(fresh.get("job-2"), Err(JobStoreError::CorruptData(_))), "{why} 이 있는 CANCELLED 행을 읽었다");
+        }
+        set(&store, "UPDATE coordinator_jobs SET state = 'ARCHIVED' WHERE job_id = 'job-1'");
+        assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
+    }
+
     #[test]
     fn corrupted_state_and_truncated_integer_fail_closed() {
         let (mut store, _dir) = open_temp();
@@ -2673,5 +3014,113 @@ mod tests {
             "잠금을 기다리기 전 시각을 썼다(called_at {called_at}, queued_at {queued_at})"
         );
         assert_eq!(queued.planning_at_unix_ms, Some(queued_at));
+    }
+}
+
+/// ★ 조각 7a — 부작용 선언 투영(계약 v18k §6 (1) · D6 · 이관 b12 ⑤).
+#[cfg(test)]
+mod side_effect_projection_tests {
+    use super::*;
+    use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
+    use gputeer_protocol::signing::{verify, NoReplayCheck};
+
+    fn manifest(job_id: &str, class: i32) -> Verified<pb::JobManifest> {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let mut manifest = pb::JobManifest {
+            schema_version: 1,
+            job_id: job_id.to_string(),
+            team_id: "team-1".to_string(),
+            entrypoint: "train.py".to_string(),
+            submitter_device_id: "submitter-1".to_string(),
+            issued_at_unix_ms: 10,
+            expires_at_unix_ms: 10_000,
+            side_effect_class: class,
+            ..Default::default()
+        };
+        manifest.submitter_signature = sign(&key, &manifest).to_vec();
+        let mut keys = InMemoryKeyring::new();
+        keys.insert("submitter-1", key.verifying_key());
+        verify(&manifest, 1, &Ed25519Verifier::new(keys), 100, &mut NoReplayCheck).unwrap()
+    }
+
+    fn submission(verified: &Verified<pb::JobManifest>, key: u8) -> AcceptedJobSubmission {
+        AcceptedJobSubmission {
+            idempotency_key: [key; 16],
+            job_id: verified.get().job_id.clone(),
+            submitter_device_id: verified.get().submitter_device_id.clone(),
+            manifest_hash: derive_manifest_hash(verified.get()),
+            deadline_unix_ms: Some(10_000),
+            max_queue_duration_ms: Some(1_000),
+        }
+    }
+
+    /// 제출 트랜잭션이 검증된 선언을 그대로 투영한다. PURE 만 자동 이어받기 대상이다. 누락 · 모르는 값 · Manifest 없는 제출은 행이 없다(= 보류 대상).
+    #[test]
+    fn the_verified_declaration_is_projected_and_only_pure_counts_as_pure() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        let mut store = CoordinatorJobStore::open(&path).unwrap();
+        let cases = [
+            ("job-pure", pb::SideEffectClass::Pure as i32, Some("PURE")),
+            ("job-idem", pb::SideEffectClass::Idempotent as i32, Some("IDEMPOTENT")),
+            ("job-side", pb::SideEffectClass::SideEffecting as i32, Some("SIDE_EFFECTING")),
+            ("job-none", pb::SideEffectClass::Unspecified as i32, None),
+            ("job-odd", 99, None),
+        ];
+        for (index, (job_id, class, expected)) in cases.iter().enumerate() {
+            let verified = manifest(job_id, *class);
+            store.submit_verified_manifest(&submission(&verified, index as u8 + 1), &verified, 100).unwrap();
+            assert_eq!(side_effect_class_of(&store.connection, job_id).unwrap().as_deref(), *expected, "{job_id}");
+            assert_eq!(side_effect_is_pure(&store.connection, job_id).unwrap(), *expected == Some("PURE"), "{job_id}");
+        }
+        store
+            .submit_accepted(
+                &AcceptedJobSubmission {
+                    idempotency_key: [42; 16],
+                    job_id: "job-bare".into(),
+                    submitter_device_id: "submitter-1".into(),
+                    manifest_hash: [1; 32],
+                    deadline_unix_ms: Some(10_000),
+                    max_queue_duration_ms: Some(1_000),
+                },
+                100,
+            )
+            .unwrap();
+        assert!(!side_effect_is_pure(&store.connection, "job-bare").unwrap(), "Manifest 없는 제출을 PURE 로 봤다");
+        // 표가 없는 DB(옛 DB)도 PURE 가 아니다 — 읽기는 표를 만들지 않는다
+        let bare = Connection::open_in_memory().unwrap();
+        assert!(!side_effect_is_pure(&bare, "job-pure").unwrap());
+    }
+
+    /// 옛 DB 이관(b12 ⑤) — 투영이 빈 Job 은 권위 디렉터리로 다시 검증한 같은 Manifest 로만 채운다. 진술이 없거나 다른 Manifest 면 거부한다.
+    #[test]
+    fn an_empty_projection_is_filled_only_from_the_same_reverified_manifest() {
+        use crate::reservation_release::KeyDirectoryProvenance::{AuthoritativeDirectoryVerifiedByCaller, Unverified};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        let mut store = CoordinatorJobStore::open(&path).unwrap();
+        let verified = manifest("job-old", pb::SideEffectClass::Pure as i32);
+        store.submit_verified_manifest(&submission(&verified, 1), &verified, 100).unwrap();
+        // 옛 DB 를 흉내 — 투영 행을 지운다
+        store.connection.execute("DELETE FROM coordinator_job_side_effects", []).unwrap();
+        assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap());
+        assert!(matches!(
+            store.project_side_effect_from_reverified("job-old", &verified, Unverified),
+            Err(JobStoreError::GuardNotMet(_))
+        ));
+        let other = manifest("job-old", pb::SideEffectClass::Idempotent as i32);
+        assert!(matches!(
+            store.project_side_effect_from_reverified("job-old", &other, AuthoritativeDirectoryVerifiedByCaller),
+            Err(JobStoreError::ManifestIdentityMismatch(_))
+        ));
+        assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap(), "거부된 재검증이 값을 썼다");
+        assert_eq!(
+            store
+                .project_side_effect_from_reverified("job-old", &verified, AuthoritativeDirectoryVerifiedByCaller)
+                .unwrap()
+                .as_deref(),
+            Some("PURE")
+        );
+        assert!(side_effect_is_pure(&store.connection, "job-old").unwrap());
     }
 }

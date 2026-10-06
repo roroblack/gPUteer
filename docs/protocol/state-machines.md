@@ -223,7 +223,7 @@ SUBMITTED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 PLANNING | QUEUED | PLAN_READY | 실행 가능한 plan 1개 이상 | PlacementRationale 기록 | COMMITTED
 PLANNING | FAILED | NO_FEASIBLE_PLAN | 모든 후보가 Hard Filter 탈락 | 탈락 사유 목록 보고 | COMMITTED
 PLANNING | CANCELLED | USER_CANCELLED | - | - | COMMITTED
-QUEUED | STAGING | RESOURCE_AVAILABLE | 선택 노드 lease 발급 성공 | fence_epoch 증가 | COMMITTED
+QUEUED | STAGING | RESOURCE_AVAILABLE | 선택 노드 lease 발급 성공 그리고 Job 에 재배치 차단 보류가 하나도 없다 | fence_epoch 증가 | COMMITTED
 QUEUED | PLANNING | REPLAN_REQUIRED | 후보 노드 상태 변화 | - | DURABLE
 QUEUED | FAILED | DEADLINE_PASSED | now > deadline | - | COMMITTED
 QUEUED | FAILED | QUEUE_TIMEOUT | 대기 시간 > max_queue_minutes | - | COMMITTED
@@ -231,24 +231,28 @@ QUEUED | FAILED | PERMANENTLY_INFEASIBLE | Hard Filter 만족 노드가 팀에�
 QUEUED | CANCELLED | USER_CANCELLED | - | lease 미발급이므로 정리 불필요 | COMMITTED
 STAGING | RUNNING | STAGING_COMPLETE | 환경 준비 + 데이터 스테이징 완료 | - | DURABLE
 STAGING | FAILED | STAGING_FAILED | 재시도 3회 초과 | 부분 다운로드 정리 | COMMITTED
-STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 | lease 회수, 재배치 | COMMITTED
-STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 | COMMITTED
+STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 그리고 Job 에 재배치 차단 보류가 하나도 없다 | lease 회수, 재배치 | COMMITTED
+STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
+STAGING | STAGING | UNREPORTED_RISK_HELD | 노드가 STAGING 중 이탈 그리고 서명 검증된 부작용 선언이 정확히 PURE 가 아니다(IDEMPOTENT · SIDE_EFFECTING · 누락 · 모르는 값 · 옛 DB) 그리고 그 시도에 운영자 override 가 없다 그리고 같은 시도의 UNREPORTED 보류 행이 아직 없다 | UNREPORTED 보류 설치 · 이 호출에서 STAGING_NODE_LOST 는 실행하지 않는다 | COMMITTED
+STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 — 단 그 Job 의 최신 시도가 RUN_UNKNOWN 이거나 재배치 차단 보류가 하나라도 있으면 lease 반납 · 예약 해제 · 보류 제거 · workspace 정리를 하지 않는다(NOTICE 는 STOP_CONFIRMED 가 · UNREPORTED 는 운영자가 푼다) | COMMITTED
 RUNNING | COMPLETED | ATTEMPT_COMPLETED | canonical attempt 확정 | 최종 artifact COMMITTED 확인 | COMMITTED
-RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 | - | COMMITTED
+RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 그리고 Job 에 재배치 차단 보류가 하나도 없다 | - | COMMITTED
+RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
+RUNNING | RUNNING | UNREPORTED_RISK_HELD | lease 만료 + grace 경과 그리고 서명 검증된 부작용 선언이 정확히 PURE 가 아니다 그리고 그 시도에 운영자 override 가 없다 그리고 같은 시도의 UNREPORTED 보류 행이 아직 없다 | UNREPORTED 보류 설치 · 이 호출에서 NODE_LOST 는 실행하지 않는다 | COMMITTED
 RUNNING | FAILED | UNRECOVERABLE_ERROR | 재시도 정책 소진 | 사유와 마지막 step 보고 | COMMITTED
 RUNNING | PAUSED | PARTITION_PAUSE | on_partition == PAUSE AND lease 만료 | checkpoint 후 정지 | DURABLE
 RUNNING | PAUSED | OWNER_PREEMPT | 노드 소유자가 일시정지 요청 | checkpoint 후 정지 | DURABLE
 RUNNING | PAUSED | USER_PAUSED | - | checkpoint 후 정지 | COMMITTED
 RUNNING | RECONCILING | DUPLICATE_COMPLETION | 2개 이상 attempt가 완료 보고 | §20.3 알고리즘 실행 | COMMITTED
-RUNNING | CANCELLED | USER_CANCELLED | - | process tree 종료, lease 반납 | COMMITTED
+RUNNING | CANCELLED | USER_CANCELLED | - | process tree 종료, lease 반납 — 단 같은 조건(최신 시도 RUN_UNKNOWN · 보류 하나라도)이면 process tree 종료는 시도하되 lease 반납 · 예약 해제 · 보류 제거는 미룬다 | COMMITTED
 INTERRUPTED | REPLANNING | FAILOVER_STARTED | 마지막 COMMITTED checkpoint 존재 | - | DURABLE
 INTERRUPTED | FAILED | NO_COMMITTED_CHECKPOINT | 복구 가능한 checkpoint 없음 | 손실 범위 보고 | COMMITTED
 INTERRUPTED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 REPLANNING | QUEUED | REPLAN_READY | 새 후보 확보 | - | COMMITTED
-REPLANNING | STAGING | REPLAN_DIRECT | 후보 노드가 이미 checkpoint 보유 | 데이터 스테이징 생략 | COMMITTED
+REPLANNING | STAGING | REPLAN_DIRECT | 후보 노드가 이미 checkpoint 보유 그리고 Job 에 재배치 차단 보류가 하나도 없다 | 데이터 스테이징 생략 | COMMITTED
 REPLANNING | FAILED | NO_FEASIBLE_PLAN | 재배치 가능한 노드 없음 | - | COMMITTED
 REPLANNING | CANCELLED | USER_CANCELLED | - | - | COMMITTED
-PAUSED | RUNNING | RESUMED | 새 lease 발급 | fence_epoch 증가 | COMMITTED
+PAUSED | RUNNING | RESUMED | 새 lease 발급 그리고 Job 에 재배치 차단 보류가 하나도 없다 | fence_epoch 증가 | COMMITTED
 PAUSED | FAILED | PAUSE_TIMEOUT | 일시정지 상한 초과 | - | COMMITTED
 PAUSED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 RECONCILING | COMPLETED | CANONICAL_CHOSEN | 유효 attempt 1개 이상 | CanonicalDecision 기록 | COMMITTED
@@ -256,6 +260,21 @@ RECONCILING | FAILED | ALL_ATTEMPTS_INVALID | 모든 attempt가 유효성 필터
 RECONCILING | RECONCILING | TIE_UNRESOLVED | 순위 동점 | canonical 변경 없이 사용자 확인 요청 | COMMITTED
 COMPLETED | ARCHIVED | RETENTION_EXPIRED | artifact 보존 기간 경과 | CAS GC 대상 등록 | DURABLE
 ```
+
+★ 2026-10-03 12:26 (실행 알림 계약 v18k §9 · 계획 조각 6b) — "재배치 차단 보류"(NOTICE_RUN_UNKNOWN · UNREPORTED_SIDE_EFFECT_RISK — `coordinator_job_holds`)가 있는 Job 은
+새 시도의 대상이 아니다. 불변식: **시도를 만드는 모든 경로의 마지막 관문**(Attempt `(none) -> CREATED` — 코드로는 공통 staging 저장소의 `insert_attempt`)에서
+같은 트랜잭션으로 다시 확인한다 — 위 guard 들은 그 불변식의 규범 표기다. 장애 이어받기(NODE_LOST · STAGING_NODE_LOST)는 시도가 RUN_UNKNOWN 이어도 되돌리지 않는다.
+★ 2026-10-03 12:49 (조각 6d) — STAGING · RUNNING -> CANCELLED(USER_CANCELLED)의 조건부 effect 는 **규범만** 바꿨다. Coordinator 에 Job 취소 경로가 아직 없다
+(`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 `USER_CANCELLED` · `JobState::Cancelled` 를 찾았고 안 나왔다 — 다른 이름의 취소 경로는 이 검색이 놓친다).
+취소를 구현할 때 이 조건을 같은 트랜잭션에서 본다.
+★ 2026-10-05 02:32 (실행 알림 계약 v18q) — 운영자 취소 `gputeer cancel-job`(`crates/coordinator/src/job_cancel.rs`)이 들어왔다. 위 "경로가 아직 없다" 는 그 전의 기록이다.
+위 조건부 effect 를 같은 트랜잭션에서 본다 — 불명 · 보류가 있으면 Job 만 CANCELLED, 아니면 최신 시도의 Lease 폐기까지. **예약은 어느 경우에도 풀지 않는다**
+(종료 보고 · STOP · 운영자 해제로만). "process tree 종료" 는 Lease 폐기로 갱신을 거부하는 것이다 — 즉시 정지 · workspace 정리는 보장하지 않는다.
+제출자 서명 취소는 아직 없다(새 서명 메시지가 필요하다).
+★ 2026-10-03 13:23 (실행 알림 계약 v18k §9 D6 · 계획 조각 7b · 7c) — `UNREPORTED_RISK_HELD` 두 행(자기 전이 — 보류 설치는 guard 가 아니라 effect 다 · b4 ③)과
+`release-held-job`(UNREPORTED 보류만 · 한 트랜잭션에서 보류 제거 · 그 시도에 override · 최종 Job 이면 Lease 폐기 · 예약 해제)을 코드로 강제한다
+(`failover.rs`). override 가 있으면 위 두 행의 guard 가 거짓이라 같은 장애 이어받기가 기존 행(NODE_LOST · STAGING_NODE_LOST)으로 간다(b9 ①).
+★ 선언이지 행동의 강제가 아니다 — PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4). 보류는 시간으로 풀지 않는다.
 
 ### Quorum 상실 중의 Job 제출
 
@@ -364,6 +383,9 @@ Agent 쪽에서는 Attempt 상태가 아니라 **노드 사건**(영속 표식)�
   RUN_UNKNOWN 은 단계 2 의 새 보고 형식으로만 들어간다.
   ★ (MUST · Coordinator) 시도가 이미 **RUN_UNKNOWN 이면 옛 형식 보고는 그 상태를 바꾸지 않는다** — 옛 FAILED 는 STOP_CONFIRMED 의 증거가 아니다.
     RUN_UNKNOWN 에서 나가는 입력은 STOP_CONFIRMED 보고 하나뿐이다. 보고 버전 · 종류로 trigger 를 고르고, 상태 쌍만으로 STOP_CONFIRMED 를 추론하지 않는다
+    ★ 2026-10-03 12:49 (계약 v18k §2 "옛 형식 보고와의 관계" · 계획 조각 6d) — 코드로 강제한다: 시도가 RUN_UNKNOWN 일 때 온 종료 보고(어느 버전 · 어느 결과든)는
+      **증거로만** 저장하고 시도 · Job 을 옮기지 않으며 해제 · 선점도 하지 않는다. `RECONCILE_NEEDED` 사건을 남긴다(사람이 맞춰 본다 · 자동 canonical 선택 없음).
+      전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다(`attempt_report_store.rs`).
     (지금 코드는 상태 쌍만 본다 — attempt_report_store.rs:631 · :662~ — 단계 2 목록 25).
   그 보고 형식에는 불명을 표현할 칸이 없기 때문이다. 그 보고가 **최신 시도의 것이고 Job 이 STAGING · RUNNING 이면** Job 은 FAILED 로 끝나고 재배치하지 않는다
   (job_store.rs:1441~1459). 이전 시도의 늦은 보고는 보고와 그 시도만 적고 지금 Job 은 바꾸지 않는다 — 어느 쪽이든 이 해석이 두 벌을 새로 만들지는 않는다.
@@ -372,13 +394,17 @@ Agent 쪽에서는 Attempt 상태가 아니라 **노드 사건**(영속 표식)�
 MUST (Agent · 소유자 쪽 — 시도가 RUN_UNKNOWN 이거나, 그 노드에 불명 사건이 열려 있는 동안)
   1  자동 파괴 금지 — workspace · 컨테이너 · 로그를 **자동으로** 지우지 않는다.
      예외: 노드 소유자의 명시적 정리(CLAUDE.md §0.1), SENSITIVE 데이터의 폐기(§0.5).
+     ★ 2026-10-03 사용자 결정 — Agent 기동의 자동 삭제 예외는 **두지 않는다**(계약 v18f). Agent 는 "이미 없음" 만 정지 증거로 쓰고, 남은 컨테이너는 소유자 해제가 지운다
   2  성공 확정 금지 — RUN_UNKNOWN 에서 COMPLETED 로 가는 행이 없다.
   3  정지 · 부재의 증거는 **따로 보낸 새 조회**(inspect)가 "돌지 않는다" · "그런 것 없음" 이라고 답한 것뿐이다. 실패한 명령(start · kill · rm)
      자신의 실패 응답 · 무응답 · "없음" 문구는 증거가 아니다. 이 기준으로 불명에 **들어갈지** 정한다 — 이 브랜치 코드가 그렇게 한다
      (container.rs 의 `inspect_running` · `confirm_stopped` · `remove_container_fact` — 조회의 "없음" 을 부재로 읽는다).
      ★ 조회의 "없음" 도 런타임의 답이다 — 이름을 같은 시도로만 만들어(결함 290) 다른 컨테이너와 섞이지 않게 한 것이 기대는 전제다.
      ★ **종결되지 않은 기동 요청이 있으면 한 시점의 조회는 증거가 아니다** — 지금 멈춰(또는 없어) 보여도 요청이 뒤늦게 적용될 수 있다(결함 532).
-     일단 RUN_UNKNOWN 이 된 뒤에는 조회로 벗어나지 않는다 — 벗어나는 길은 소유자의 해제(STOP_CONFIRMED)뿐이다(결정 D2).
+     일단 RUN_UNKNOWN 이 된 뒤에는 **한 시점의 조회로** 벗어나지 않는다 — 벗어나는 길은 STOP_CONFIRMED 뿐이다(결정 D2). ★ 2026-09-30 사용자 승인(위 RUN_UNKNOWN 행) 뒤로
+     STOP_CONFIRMED 는 Agent 가 기계 증거(확인한 ID 로 따로 보낸 새 조회가 "이미 없음" — 지우지 않는다 · 계약 v18f §4)로 자동으로 내거나, 증거를 얻지 못하면(컨테이너가
+     남아 있음 포함) 소유자가 해제한다(확인한 ID 로 지우고 새 조회 — 소유자의 명시적 정리).
+     ★ 2026-10-03 — 이 줄이 "소유자의 해제뿐" 으로 남아 위 행과 어긋났다(계약 v18 이 맞췄다)
   4  그 노드는 새 작업을 받지 않는다 — 노드 사건이 열려 있거나, **보내지 못한 STOP_CONFIRMED 가 미전송 보관에 남아 있는 동안**.
      로컬 해제가 곧 차단 해제가 아니다 — Coordinator 가 받았다고 답할 때까지 막는다(Coordinator 쪽 RUN_UNKNOWN 은 같은 Job 의 재배치를 막는 것이고,
      노드 차단은 Agent 쪽 기록이 한다 — D4).
@@ -475,7 +501,14 @@ ACTIVE | SUPERSEDED | HIGHER_EPOCH_SEEN | 더 높은 fence_epoch 의 lease 관�
 ACTIVE | EXPIRED | MAX_DURATION_EXCEEDED | 누적 >= max_total_duration_seconds | 새 lease_id 재발급 필요 | COMMITTED
 EXPIRED | ACTIVE | LATE_RENEW_ACCEPTED | grace period 내 AND 더 높은 epoch 미발급 | - | COMMITTED
 EXPIRED | SUPERSEDED | GRACE_ELAPSED | grace period 경과 | 새 attempt 생성 허용 | COMMITTED
+ACTIVE | HELD_UNKNOWN | RUN_UNKNOWN_NOTICED | 그 Lease 의 시도가 RUN_UNKNOWN | 재배치 근거에서 뺀다 · 갱신 · Resume 은 RUN_UNKNOWN_HELD 로 서명해 거부(만료시각 불변) | COMMITTED
+EXPIRED | HELD_UNKNOWN | RUN_UNKNOWN_NOTICED | 그 Lease 의 시도가 RUN_UNKNOWN | 재배치 근거에서 뺀다 | COMMITTED
+HELD_UNKNOWN | REVOKED | STOP_CONFIRMED | - | 자원 반납 | COMMITTED
 ```
+
+★ 2026-10-03 12:35 (실행 알림 계약 v18k §8 · §9 D8 · 계획 조각 6c) — `HELD_UNKNOWN` 은 "만료됐더라도 재배치 근거가 아니다" 를 표에 보이려는 상태다. 저장소에 따로 적지 않는다 —
+그 Lease 의 시도가 RUN_UNKNOWN 인 동안이 곧 HELD_UNKNOWN 이다(갱신 · Resume 판정이 같은 트랜잭션에서 시도 상태를 읽는다 — `lease_store.rs` `lease_attempt_is_run_unknown`).
+순서 B(failover 가 먼저 폐기)면 REVOKED 그대로다 — 폐기 판정이 보류 판정보다 앞선다. ★ 이 표(§5)는 여전히 구현 대조가 없는 설계 메모다(§6).
 
 ### grace period
 

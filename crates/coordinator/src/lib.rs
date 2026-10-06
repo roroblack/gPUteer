@@ -35,6 +35,8 @@ pub mod failover;
 pub mod gpu_attestation;
 pub mod grant_from_stored;
 pub mod inventory_store;
+pub mod job_cancel;
+pub mod job_holds;
 pub mod job_store;
 pub mod lease_store;
 pub mod manifest_requirements;
@@ -60,7 +62,9 @@ pub mod status;
 pub mod orchestrate;
 pub mod replica_ack_store;
 pub mod reservation_release;
+pub mod run_notice_store;
 pub mod staging_store;
+pub mod supersede_notice_store;
 use lease_store::{
     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision, ResumeRequestIdentity,
     StoredLease,
@@ -290,6 +294,14 @@ pub struct CoordinatorConfig {
     /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 예약이 없어졌거나 다른 실행으로 바뀐 늦은 보고도 Attempt 의 배정
     ///   기록으로 결합해 저장한다(`bound_via = assignment_record`) — 그 보고로 예약을 풀거나 결과를 채택하지 않는다.
     pub accept_report_sessions: bool,
+    /// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §2) — REPORT 세션에서 실행 알림(FrameType 19)을 받아 저장 · 처리하고 서명된 ACK 로 답한다.
+    ///   ★ 계획 §4 활성화 관문 — ADR-034 강제 코드가 없으면 `--accept-run-notice` 를 켜는 즉시 기동을 거부한다(배포 바이너리에 우회가 없다).
+    ///   이 칸은 격리 시험만 켠다.
+    pub accept_run_notice: bool,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 풀 모드의 새 실행 관문. ACK 를 기록하는 트랜잭션 안에서 그 노드 앞 미확인 대체 통지를 보고,
+    ///   있으면 ACK 를 기록하지 않는다(수신 확인 없음 → Agent 는 실행하지 않는다). `--pool-mode` 없이는 기동 거부.
+    ///   ★ 모든 Agent 가 우편함을 켠 뒤 켠다 — 켜지 않은 Agent 는 우편함을 비우지 못해 그 노드의 새 실행이 막힌다(제안 §호환성).
+    pub mailbox_gate: bool,
     /// ★ 2026-09-23 (신뢰망 남은 일 B) — 종료 보고를 저장하는 **같은 커밋에서** 그 노드의 예약을 푼다.
     ///
     /// 신뢰망(서로 믿는 참여자) 전용 운영자 스위치다. 푸는 근거는 셋이고, 하나라도 모자라면 **보고만 저장하고
@@ -1250,14 +1262,16 @@ fn serve_one_connection_impl(
             gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
             gputeer_protocol::constants::MODE_RENEW,
             gputeer_protocol::constants::MODE_REPORT,
+            gputeer_protocol::constants::MODE_MAILBOX,
         ]
         .contains(&hello.mode)
         {
             return Err(session_protocol_error(format!(
-                "HELLO_REJECTED: mode 불일치 — 풀은 FRESH({}) · RENEW({}) · REPORT({}) 만 받는다, 받은 값 {}",
+                "HELLO_REJECTED: mode 불일치 — 풀은 FRESH({}) · RENEW({}) · REPORT({}) · MAILBOX({}) 만 받는다, 받은 값 {}",
                 gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
                 gputeer_protocol::constants::MODE_RENEW,
                 gputeer_protocol::constants::MODE_REPORT,
+                gputeer_protocol::constants::MODE_MAILBOX,
                 hello.mode
             )));
         }
@@ -1358,6 +1372,17 @@ fn serve_one_connection_impl(
             agent_keys,
             replay,
             clock,
+        );
+    }
+    if hello.mode == gputeer_protocol::constants::MODE_MAILBOX {
+        return serve_mailbox_session(
+            config,
+            stream,
+            signing_key,
+            agent_keys,
+            replay,
+            clock,
+            &hello,
         );
     }
     if hello.mode == gputeer_protocol::constants::MODE_REPORT {
@@ -1589,6 +1614,8 @@ fn serve_one_connection_impl(
                     clock.now_unix_ms(),
                     // 결함 218 — 풀 모드는 첫 진행 신호가 Job 을 옮긴다. 풀 밖 lane 은 전처럼 ACK 가 옮긴다.
                     !config.pool_mode,
+                    // 우편함 v3 §4 — 그 노드 앞 미확인 대체 통지가 있으면 기록하지 않는다.
+                    config.mailbox_gate,
                 )
             })
             .map_err(|error| {
@@ -2432,11 +2459,11 @@ fn serve_one_connection_impl(
                 hex_bytes(&result.request_nonce)
             );
 
-            // Agent는 정상 정책 거부(outcome=2/3/6/8)를 받으면 즉시
+            // Agent는 정상 정책 거부(outcome=2/3/6/8/9)를 받으면 즉시
             // 갱신 함수를 종료하므로, 다음 회차의 요청을 기다리지 않는다.
             // Coordinator도 같은 회차에서 갱신 루프를 끝내야 교착/EOF 오류를
-            // 만들지 않는다.
-            if matches!(result.outcome, 2 | 3 | 6 | 8) {
+            // 만들지 않는다. (★ 2026-10-03 12:35 조각 6c — 9 RUN_UNKNOWN_HELD 를 더했다)
+            if matches!(result.outcome, 2 | 3 | 6 | 8 | 9) {
                 break;
             }
 
@@ -2472,7 +2499,8 @@ fn ack_receipt_allowed(record: crate::staging_store::GrantAcceptedRecord) -> boo
         R::StartingStillCurrent
         | R::AlreadyRecorded
         | R::NotCurrentAttempt
-        | R::ClockBehindStaging => false,
+        | R::ClockBehindStaging
+        | R::MailboxNotEmpty => false,
     }
 }
 
@@ -2534,6 +2562,12 @@ fn ingress_kind(message: &IngressMessage) -> &'static str {
         IngressMessage::NeighborUnreachableReport(_) => "NeighborUnreachableReport",
         IngressMessage::AttemptReportAck(_) => "AttemptReportAck",
         IngressMessage::GrantAckReceipt(_) => "GrantAckReceipt",
+        IngressMessage::AttemptRunNotice(_) => "AttemptRunNotice",
+        IngressMessage::AttemptRunNoticeAck(_) => "AttemptRunNoticeAck",
+        IngressMessage::SupersedeNotice(_) => "SupersedeNotice",
+        IngressMessage::MailboxDelivery(_) => "MailboxDelivery",
+        IngressMessage::MailboxAck(_) => "MailboxAck",
+        IngressMessage::MailboxAckReceipt(_) => "MailboxAckReceipt",
     }
 }
 
@@ -3172,6 +3206,209 @@ fn required_durability(
         .map_err(|_| "알 수 없는 durability 값".to_string())
 }
 
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §2) — MAILBOX 세션: Hello(MAILBOX) -> 서명된 배달(그 노드의 미확인 통지 **전부**) -> 노드의 답 -> 커밋 -> 수신 확인.
+///
+/// ```text
+/// 배달      통지는 저장한 서명 바이트 그대로 싣는다(안의 서명은 노드가 Coordinator 키로 따로 검증한다) · 겉은 이 세션 nonce 로 서명
+/// 빈 배달   "지금 우편함은 비었다" — 답을 기다리지 않고 닫는다
+/// 답        서명 · 조합 규칙(이 세션에서 배달한 것만 · 해시 · 중복 · enum) 검증 뒤 한 BEGIN IMMEDIATE 로 acked_at · action · 답 바이트를 적는다
+/// 수신 확인  커밋한 **뒤에만** 보낸다 — 못 받은 노드는 다음 배달에 그 통지가 없으면 커밋됐다고 안다(제안 §1 · 검수 mb2 ②)
+/// 답 없음   배달 뒤 노드가 답하지 않고 닫으면 아무것도 적지 않는다 — 다음 세션에 다시 간다
+/// ```
+/// ★ 풀 모드 전용이다(통지 표 · 관문이 풀 control DB 에 있다). 이 세션은 생존 관측으로 적지 않는다(일을 받으러 온 연결이 아니다).
+fn serve_mailbox_session(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    signing_key: &SigningKey,
+    agent_keys: &InMemoryKeyring,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
+    clock: &SystemClock,
+    hello: &pb::AgentSessionHello,
+) -> Result<(), SessionHandlerError> {
+    if !config.pool_mode {
+        return Err(session_protocol_error(
+            "MAILBOX_SESSION_REFUSED: 우편함은 풀 모드에서만 받는다",
+        ));
+    }
+    let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
+        session_protocol_error("풀 모드인데 제어 DB 가 없다(시작 검사가 막았어야 한다)")
+    })?;
+    let notices = rusqlite::Connection::open(control_db)
+        .map_err(|e| e.to_string())
+        .and_then(|connection| {
+            connection
+                .busy_timeout(std::time::Duration::from_secs(1))
+                .map_err(|e| e.to_string())?;
+            crate::supersede_notice_store::unacked_for_node(&connection, &hello.node_id)
+        })
+        .map_err(|error| SessionHandlerError::Classified(storage_error("mailbox read", error)))?;
+    let mut delivery = pb::MailboxDelivery {
+        schema_version: 1,
+        node_id: hello.node_id.clone(),
+        notices: notices.clone(),
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: clock.now_unix_ms(),
+        session_nonce: hello.nonce.clone(),
+        coordinator_signature: Vec::new(),
+    };
+    delivery.coordinator_signature = sign(signing_key, &delivery).to_vec();
+    let frame = write_frame(FrameType::MailboxDelivery, &delivery.encode_to_vec())
+        .map_err(|e| session_protocol_error(format!("MailboxDelivery 프레임 인코딩 실패: {e}")))?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("MailboxDelivery 전송 실패: {e}"),
+            ))
+        })?;
+    println!(
+        "MAILBOX_DELIVERED node_id={} count={}",
+        hello.node_id,
+        notices.len()
+    );
+    if notices.is_empty() {
+        return Ok(());
+    }
+    let message = read_frame(
+        stream,
+        gputeer_protocol::constants::MAILBOX_MAX_SCHEMA_VERSION,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| {
+        session_framing_error(
+            "MAILBOX_SESSION: 답을 받지 못했다(연결 끊김 · 소켓 시한) — 아무것도 적지 않았다",
+            "MAILBOX_SESSION: 답을 검증하지 못했다(서명 · 버전 · 형식)",
+            &e,
+        )
+    })?;
+    let verified = match &message {
+        IngressMessage::MailboxAck(verified) => verified,
+        other => {
+            return Err(session_protocol_error(format!(
+                "MAILBOX_SESSION: 답이 아닌 프레임이다({})",
+                ingress_kind(other)
+            )))
+        }
+    };
+    // 검증을 통과한 뒤에야 필드를 본다.
+    let ack = verified.get();
+    gputeer_protocol::mailbox_rules::validate_mailbox_ack(
+        ack,
+        &hello.node_id,
+        &hello.nonce,
+        &notices,
+    )
+    .map_err(|rule| session_protocol_error(format!("MAILBOX_ACK_REJECTED: {rule}")))?;
+    let accepted = crate::supersede_notice_store::record_acks(
+        control_db,
+        &hello.node_id,
+        ack,
+        clock.now_unix_ms(),
+    )
+    .map_err(|error| SessionHandlerError::Classified(storage_error("mailbox ack", error)))?;
+    let mut receipt = pb::MailboxAckReceipt {
+        schema_version: 1,
+        node_id: hello.node_id.clone(),
+        accepted: accepted.clone(),
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: clock.now_unix_ms(),
+        session_nonce: hello.nonce.clone(),
+        coordinator_signature: Vec::new(),
+    };
+    receipt.coordinator_signature = sign(signing_key, &receipt).to_vec();
+    let frame =
+        write_frame(FrameType::MailboxAckReceipt, &receipt.encode_to_vec()).map_err(|e| {
+            session_protocol_error(format!("MailboxAckReceipt 프레임 인코딩 실패: {e}"))
+        })?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!(
+                    "MailboxAckReceipt 전송 실패(답은 커밋됐다 — 다음 배달에 없으면 처리 끝): {e}"
+                ),
+            ))
+        })?;
+    println!(
+        "MAILBOX_ACK_RECORDED node_id={} accepted={}",
+        hello.node_id,
+        accepted.join(",")
+    );
+    Ok(())
+}
+
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §2) — REPORT 세션의 실행 알림. 저장 · 처리(한 트랜잭션)를 마친 **뒤에만** 서명된 ACK 를 보낸다.
+fn serve_run_notice(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    signing_key: &SigningKey,
+    clock: &SystemClock,
+    hello: &pb::AgentSessionHello,
+    verified: &gputeer_protocol::signing::Verified<pb::AttemptRunNotice>,
+) -> Result<(), SessionHandlerError> {
+    if !config.accept_run_notice {
+        return Err(session_protocol_error(
+            "RUN_NOTICE_REFUSED: --accept-run-notice 없이 실행 알림을 받지 않는다 — 처리하지 않을 알림에 받았다고 답하지 않는다",
+        ));
+    }
+    if hello.node_id != config.agent_device_id {
+        return Err(session_protocol_error("RUN_NOTICE_REJECTED: Hello 의 노드가 이 연결의 노드가 아니다"));
+    }
+    let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
+        SessionHandlerError::Classified(storage_error(
+            "run notice store",
+            "--accept-run-notice 는 control DB(--grant-from-control-db)가 있어야 한다",
+        ))
+    })?;
+    let context = crate::run_notice_store::RunNoticeAnswerContext {
+        control_db,
+        coordinator_id: &config.coordinator_device_id,
+        expected_node_id: &config.agent_device_id,
+        // 풀의 등록 키(권위 있는 디렉터리)로 검증한 알림만 정지 확인 해제를 받는다. 풀 밖 lane 은 거부된다(저장소가 KeyDirectoryNotVerified).
+        key_directory: if config.pool_mode {
+            crate::reservation_release::KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        } else {
+            crate::reservation_release::KeyDirectoryProvenance::Unverified
+        },
+        resume_policy: crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: config.shared_checkpoint_root.clone(),
+            producer_keys: config.pool_agents.clone(),
+        },
+        session_nonce: &hello.nonce,
+        now_unix_ms: clock.now_unix_ms(),
+    };
+    let (ack, accepted) = crate::run_notice_store::answer_run_notice(&context, signing_key, verified)
+        .map_err(|error| match error {
+            crate::run_notice_store::RunNoticeAnswerError::Rejected(why) => session_protocol_error(why),
+            crate::run_notice_store::RunNoticeAnswerError::Storage(why) => {
+                SessionHandlerError::Classified(storage_error("run notice store", why))
+            }
+        })?;
+    let frame = write_frame(FrameType::AttemptRunNoticeAck, &ack.encode_to_vec())
+        .map_err(|e| session_protocol_error(format!("AttemptRunNoticeAck 프레임 인코딩 실패: {e}")))?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("AttemptRunNoticeAck 전송 실패(알림은 처리됐다 — 같은 바이트 재전송은 멱등): {e}"),
+            ))
+        })?;
+    println!(
+        "RUN_NOTICE_ACK_SENT attempt_id={} node_id={} sequence={} kind={:?} created={} effect={:?}",
+        ack.attempt_id, ack.node_id, ack.sequence, accepted.kind, ack.created, accepted.effect
+    );
+    Ok(())
+}
+
 fn serve_report_session(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
@@ -3209,6 +3446,10 @@ fn serve_report_session(
     })?;
     let verified = match &message {
         IngressMessage::AttemptReport(verified) => verified,
+        // ★ 조각 5f — 같은 REPORT 세션에 실행 알림(FrameType 19)이 오면 그 알림에 답한다(한 연결 한 프레임 — 보고와 같다).
+        IngressMessage::AttemptRunNotice(notice) => {
+            return serve_run_notice(config, stream, signing_key, clock, hello, notice)
+        }
         other => {
             return Err(session_protocol_error(format!(
                 "REPORT_SESSION: 종료 보고가 아닌 프레임이다({})",
@@ -3547,6 +3788,14 @@ fn serve_resume_connection(
             result.outcome = 8;
             result.detail = format!("request epoch is above stored epoch {}", stored.fence_epoch);
         }
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — RESUME_OUTCOME_RUN_UNKNOWN_HELD. Lease 를 싣지 않는다.
+        Ok(ResumeDecision::RunUnknownHeld { stored }) => {
+            result.outcome = 9;
+            result.detail = format!(
+                "attempt {} is RUN_UNKNOWN (held) — the lease is not resumed until a stop is confirmed",
+                stored.attempt_id
+            );
+        }
         Err(error) => {
             return Err(SessionHandlerError::Classified(
                 classify_resume_store_error(error),
@@ -3811,6 +4060,17 @@ fn build_renew_result(
         }
     };
 
+    // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — RENEW_OUTCOME_RUN_UNKNOWN_HELD. 만료시각을 늘리지 않고 Lease 를 싣지 않는다.
+    let held_result = |request_nonce: Vec<u8>, attempt_id: &str| pb::RenewLeaseResult {
+        outcome: 9, // RENEW_OUTCOME_RUN_UNKNOWN_HELD
+        detail: format!("attempt {attempt_id} is RUN_UNKNOWN (held) — the lease is not renewed until a stop is confirmed"),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    };
+
     let mut result = match lease_store {
         // ★ 코덱스 독립 검수(2026-08-19, p114) 지적 — override 가
         //   있으면 저장소를 **전혀 건드리지 않는다**(레거시 `None`
@@ -3831,6 +4091,11 @@ fn build_renew_result(
                     })?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                     revoked_result(request_nonce, revoked_at_unix_ms)
+                } else if store
+                    .is_run_unknown_held(&stored)
+                    .map_err(|e| format!("lease store 조회 실패: {e}"))?
+                {
+                    held_result(request_nonce, &stored.attempt_id)
                 } else if stored.expires_at_unix_ms <= now {
                     return Err(format!(
                         "LEASE_POLICY_REFUSED: lease store expired during renewal: {}",
@@ -3862,6 +4127,9 @@ fn build_renew_result(
                 Err(error) => return Err(format!("lease store 갱신 실패: {error}")),
                 Ok(RenewDecision::MaxDurationExceeded(_)) => {
                     max_duration_exceeded_result(request_nonce)
+                }
+                Ok(RenewDecision::RunUnknownHeld(stored)) => {
+                    held_result(request_nonce, &stored.attempt_id)
                 }
                 Ok(RenewDecision::Renewed(resolved)) => {
                     // ★ 2026-10-01 (signing.md §6.8) — 서명 직전에 유예를 올려 저장한다. 그 사이 재배치가 폐기했으면 REVOKED 로 답한다.
@@ -4367,6 +4635,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
+        accept_run_notice: flags.bool_flag("--accept-run-notice"),
+        mailbox_gate: flags.bool_flag("--mailbox-gate"),
         release_on_exit_report: flags.bool_flag("--release-on-exit-report"),
         pool_mode,
         pool_agents,
@@ -4513,6 +4783,23 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         return Err(
             "STARTUP_REFUSED: REPLAY_DB_NEEDS_POOL_MODE — --replay-db 는 --pool-mode 에서만 쓴다. \
              설정값 grant id 에서 유도한 nonce 는 재시작 뒤 겹쳐 정상 재접속을 거부한다(DoD-24)"
+                .to_string(),
+        );
+    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 검수 mb2 ①) — 관문은 풀 경로의 ACK 기록에만 있다. 풀 밖에서 켜면 막는다고 믿는데 막지 않는다.
+    if config.mailbox_gate && !config.pool_mode {
+        return Err(
+            "STARTUP_REFUSED: MAILBOX_GATE_NEEDS_POOL_MODE — --mailbox-gate 는 --pool-mode 에서만 쓴다. \
+             관문은 풀 경로의 ACK 기록에만 있다"
+                .to_string(),
+        );
+    }
+    // ★ 2026-10-03 11:51 (실행 알림 계획 §4 활성화 관문 · 조각 5f) — 실행 알림 받기는 ADR-034(신뢰망 단일 Coordinator 확정 등급) 강제 코드가 들어온 뒤에 켠다.
+    //   그 전에는 켜는 즉시 거부한다 — RUN_UNKNOWN(보류 · 조각 6)이 없으면 증거를 못 얻은 노드의 불명이 중앙에 닿지 않아, 정지 확인만 반쯤 켜진다.
+    if config.accept_run_notice {
+        return Err(
+            "STARTUP_REFUSED: RUN_NOTICE_NOT_ACTIVATED — --accept-run-notice 는 ADR-034 강제 코드와 실행 여부 불명 보류(조각 6)가 들어온 뒤에 켠다 \
+             — 지금은 격리 시험에서만 쓴다"
                 .to_string(),
         );
     }
@@ -5424,6 +5711,56 @@ mod tests {
             unsupported_heartbeat_lane(&config, lane_from_config(&config)),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod run_notice_activation_tests {
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// ★ 조각 5f · 계획 §4 활성화 관문 — `--accept-run-notice` 는 ADR-034 강제 코드 전까지 켜는 즉시 거부된다(우회 없음). 끄면 지금과 같다.
+    #[test]
+    fn the_accept_run_notice_switch_refuses_startup_until_activation() {
+        let args = |extra: &[&str]| -> Vec<String> {
+            let mut argv: Vec<String> = [
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                &hex(&[3u8; 32]),
+                "--peer-pubkey",
+                &hex(SigningKey::from_bytes(&[4u8; 32]).verifying_key().as_bytes()),
+                "--coordinator-device-id",
+                "coordinator-1",
+                "--agent-device-id",
+                "node-1",
+                "--grant-id",
+                "grant-1",
+                "--attempt-id",
+                "attempt-1",
+                "--lease-id",
+                "lease-1",
+                "--job-id",
+                "job-1",
+                "--i-understand-legacy-mode-is-unsafe",
+                "true",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            argv.extend(extra.iter().map(|s| s.to_string()));
+            argv
+        };
+        let off = parse_config_from_args(&args(&[])).expect("스위치를 끄면 지금처럼 읽힌다");
+        assert!(!off.accept_run_notice);
+        let refused = match parse_config_from_args(&args(&["--accept-run-notice", "true"])) {
+            Ok(_) => panic!("--accept-run-notice 를 켰는데 거부하지 않았다"),
+            Err(refused) => refused,
+        };
+        assert!(refused.contains("RUN_NOTICE_NOT_ACTIVATED"), "{refused}");
     }
 }
 

@@ -131,6 +131,9 @@ pub const MODE_RENEW: i32 = 3;
 /// `AgentSessionHello.mode` — 새 연결로 종료 보고만 한다(B+E 계약 단계 1).
 pub const MODE_REPORT: i32 = 4;
 
+/// `AgentSessionHello.mode` — 새 연결로 대체 통지 우편함만 비운다(2026-10-02 우편함 v3 §2).
+pub const MODE_MAILBOX: i32 = 5;
+
 /// `AttemptReport` 가 쓰는 가장 높은 schema_version — 2 부터 종료 관측 · 확정 실패 단계 필드가 있다(B+E 계약 단계 1).
 /// ★ 소비 경로(Coordinator 의 AttemptReport 읽기 등)는 이 값을 지원 버전으로 넘긴다 — 숫자를 경로마다 적지 않는다.
 pub const ATTEMPT_REPORT_MAX_SCHEMA_VERSION: u32 = 2;
@@ -172,6 +175,19 @@ pub const LEASE_MAX_SCHEMA_VERSION: u32 = 2;
 
 /// 서명된 재배치 유예(`reassignment_grace_ms = 34`)를 실을 수 있는 가장 낮은 `Lease` schema_version.
 pub const LEASE_REASSIGNMENT_GRACE_MIN_SCHEMA_VERSION: u32 = 2;
+
+/// `AttemptRunNotice`(FrameType 19) · `AttemptRunNoticeAck`(FrameType 20)를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1 · 검수 b14 ③. 프레임 읽기는 호출자가 준 상한 하나를 모든 종류에 쓰는데(REPORT 세션은
+///   AttemptReport 의 상한 2 로 부른다), 이 두 종류는 그 상한과 **이 값 중 작은 쪽**으로 읽는다 — 상한을 1 로 낮추면 AttemptReport v2 가 깨지고,
+///   그대로 두면 알림 v2 가 통과한다(`crypto/src/framed_ingress.rs`).
+pub const ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION: u32 = 1;
+
+/// 우편함 메시지 넷(FrameType 21 ~ 24)을 받는 쪽이 읽는 최대 schema_version — 호출자 상한과 **작은 쪽**으로 읽는다(실행 알림과 같은 방식).
+pub const MAILBOX_MAX_SCHEMA_VERSION: u32 = 1;
+
+/// `SupersedeNotice.notice_id` 를 만드는 BLAKE3 입력의 앞머리(끝의 NUL 포함). 우편함 v3 §1.
+pub const SUPERSEDE_NOTICE_ID_TAG: &[u8] = b"gputeer/supersede-notice-id/v1\0";
 
 /// GPU 관측(`gpu_observation = 8`)을 실을 수 있는 가장 낮은 `AgentSessionHello` schema_version.
 pub const AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION: u32 = 2;

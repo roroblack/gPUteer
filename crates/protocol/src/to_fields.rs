@@ -567,6 +567,138 @@ impl ToCanonicalFields for pb::AttemptReportAck {
     }
 }
 
+// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 모든 칸이 서명 대상이다 — 알림 종류 · 출발 · 사유 · 증거 · 순번이 서명 밖이면 중간에서
+//   "모름" 을 "정지 확인" 으로 바꿔 보류를 풀 수 있다.
+impl ToCanonicalFields for pb::AttemptRunNotice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+        put_uint(&mut f, 6, self.kind as u64);
+        put_uint(&mut f, 7, self.origin as u64);
+        put_uint(&mut f, 8, self.reason as u64);
+        put_uint(&mut f, 9, self.stop_evidence as u64);
+        put_uint(&mut f, 10, self.sequence);
+        put_uint(&mut f, 11, self.observed_at_unix_ms);
+        put_uint(&mut f, 12, self.issued_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::AttemptRunNoticeAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+        put_msg(&mut f, 6, &self.notice_hash);
+        put_uint(&mut f, 7, self.kind as u64);
+        put_uint(&mut f, 8, self.sequence);
+        put_bool(&mut f, 9, self.created);
+        put_str(&mut f, 10, &self.coordinator_id);
+        put_uint(&mut f, 11, self.issued_at_unix_ms);
+        // ★ 세션 nonce 가 서명 밖이면 다른 세션의 "받았다" 를 이 세션의 것으로 재생할 수 있다.
+        put_bytes(&mut f, 12, &self.session_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+// ★ 2026-10-02 — 대체 통지 우편함 v3 §1. 모든 칸이 서명 대상이다 — 원인 · 처분 · 시각이 서명 밖이면 중간에서 바꿔 끼울 수 있다.
+impl ToCanonicalFields for pb::SupersedeNotice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.notice_id);
+        put_str(&mut f, 3, &self.job_id);
+        put_str(&mut f, 4, &self.attempt_id);
+        put_str(&mut f, 5, &self.node_id);
+        put_uint(&mut f, 6, self.fence_epoch);
+        put_str(&mut f, 7, &self.lease_id);
+        put_uint(&mut f, 8, self.cause as u64);
+        put_uint(&mut f, 9, self.job_disposition as u64);
+        put_uint(&mut f, 10, self.decided_at_unix_ms);
+        put_str(&mut f, 11, &self.coordinator_id);
+        put_uint(&mut f, 12, self.issued_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+// ★ 안의 통지는 규칙 i 대로 서명 칸(90)을 뺀 내용이 겉 서명에 묶인다 — 통지 서명은 받는 쪽이 따로 검증한다(Grant 안의 Lease 와 같다).
+impl ToCanonicalFields for pb::MailboxDelivery {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.node_id);
+        put_repeated_msg(&mut f, 3, &self.notices);
+        put_str(&mut f, 4, &self.coordinator_id);
+        put_uint(&mut f, 5, self.issued_at_unix_ms);
+        put_bytes(&mut f, 6, &self.session_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::SupersedeHandled {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.notice_id);
+        put_msg(&mut f, 2, &self.notice_hash);
+        put_uint(&mut f, 3, self.action as u64);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::MailboxAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.node_id);
+        put_repeated_msg(&mut f, 3, &self.handled);
+        put_uint(&mut f, 4, self.issued_at_unix_ms);
+        // ★ 세션 nonce 가 서명 밖이면 다른 세션의 답을 이 세션의 것으로 재생할 수 있다.
+        put_bytes(&mut f, 5, &self.session_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::MailboxAckReceipt {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.node_id);
+        put_repeated_str(&mut f, 3, &self.accepted);
+        put_str(&mut f, 4, &self.coordinator_id);
+        put_uint(&mut f, 5, self.issued_at_unix_ms);
+        put_bytes(&mut f, 6, &self.session_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl ToCanonicalFields for pb::GrantAckReceipt {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

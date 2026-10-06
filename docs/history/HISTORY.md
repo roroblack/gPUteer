@@ -25,6 +25,866 @@
 
 ---
 
+## 2026-10-05 02:54 — 실행 알림 계획 §5 5번 — 운영자 취소 `gputeer cancel-job`(계약 v18q · 격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 5번 · 계약 §9 「★ v18q」(설계 검수 3회차 ACCEPTED) · state-machines.md Job 표 STAGING · RUNNING -> CANCELLED 조건부 effect
+- 스트림: Coordinator · CLI
+- 결정: 사용자 「ㄱㄱ」 — 앞서 드린 추천안 A(운영자 명령)로 진행. 제출자 서명 취소는 이 개정 밖(새 서명 메시지 · domain_tag 필요)
+- 수행: ① Job 저장소가 CANCELLED 를 읽는다(행 모양 — 끝난 이유 칸 비어 있음 · 나머지는 취소 전 모양 · 계획은 대기열 시각과 함께). ARCHIVED 는 여전히 손상
+  ② `job_cancel::cancel_job_by_operator` — 한 트랜잭션: 감사 행(`coordinator_job_cancellations` · 멱등) · 대기 상태는 Job 만 · STAGING · RUNNING 은 풀리지 않은 불명
+  또는 보류가 있으면 Job 만, 아니면 최신 시도 Lease 폐기까지 · 예약은 어느 경우에도 풀지 않는다 · COMPLETED · FAILED 거부 · 시도 행 없는 STAGING · RUNNING 은 손상 거부
+  ③ `run_notice_store::has_unresolved_run_unknown` — 시도가 RUN_UNKNOWN 이거나, 같은 노드의 더 큰 sequence STOP 이 없는 RUN_UNKNOWN 알림이 있다
+  ④ release-lost-node — 풀리지 않은 불명이면 Job 상태와 무관하게 거부(FAILED · COMPLETED 의 기존 공백도 닫음 — 더 거부하는 쪽) · CANCELLED 를 받되 최신 시도면
+  Lease 폐기 + 지금 > 만료 + max(`--failover-grace-ms`, 서명 유예)(failover 와 같은 식 · 경계) · 인자 없으면 거부. release-held-job 최종 분기도 불명이면 거부
+  ⑤ CLI `cancel-job` · `release-lost-node --failover-grace-ms` · 대시보드 CANCELLED 색
+- 검증: Windows `cargo test --workspace -j 1 --no-fail-fast` 126 묶음 1681 passed · 0 failed · ignored 4(직전 1670 + 새 시험 11 — 운영자 취소 절 8 · 같은 노드 판정 1 ·
+  행 모양 단위 1 · CLI 1). 뮤테이션 5 — 취소의 Lease 폐기 제거 · release-lost-node 불명 검사 제거 · 불명 판정을 시도 상태만으로 · 취소 유예 검사 제거 · 같은 노드 조건 제거
+  → 각각 해당 시험 실패. 독립 검수(Codex gpt-6-sol · 기계 검토): 설계 v18q 3회차 ACCEPTED · 코드 2회차 ACCEPTED(1회차 지적 5 — 다른 노드 STOP · 불가능한 행 모양 ·
+  시도 행 없는 취소 · 감사 표 DDL 트랜잭션 밖 · 무효 단언 — 모두 고침). ★ 시험 하나에 STOP 의 동작을 틀리게 적었었다(종결 시도의 STOP 은 증거만 더한다고 가정) —
+  실제는 계약 §3 대로 그 시도의 보류 · 예약을 STOP 이 직접 푼다. 시험을 실제 규칙에 맞췄다
+- 한계: 즉시 정지 아님(다음 갱신의 서명된 REVOKED 또는 끊김 시한) · 노드 작업 폴더 정리 보장 안 함 · 저장소 열기의 멱등 스키마 준비는 트랜잭션 밖(다른 운영자 명령과 같다) ·
+  취소된 Job 에 옛 staging 요청이 재생되면 손상 오류(새 Grant 는 내지 않는다) · 리눅스(비-root)는 재지 않았다
+- 리포트: 계획 문서 · 계약 v18q 가 대신한다
+
+---
+
+## 2026-10-04 15:50 — 실행 알림 계획 §5 4번 — 이어받은 뒤 옛 시도의 체크포인트를 중앙 수락 · 재개 후보에서 뺀다(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 4번 · 계약 D6 보강 셋째 줄 · ADR-034 시험 8
+- 스트림: Coordinator
+- 수행: ① `checkpoint_manifest_store::store_verified_manifest` — 시도 · 예약 대조에 더해 Job 의 최고 fence 를 보고, 더 높은 시도가 있으면
+  `BindingMismatch(SupersededByHigherFence)`. 옛 예약 행이 "만료" 표시로 남아 기존 예약 대조만으로는 통과했다. 이미 받은 같은 바이트는 그대로 돌려준다.
+  ② `failover::find_resume_point` — 후보를 최고 fence 시도의 체크포인트와 Job 에 저장된 이어받기 기준 지점(바이트 일치)으로 좁힌다. 전에는 새 시도가
+  체크포인트를 내기 전 다음 이어받기에서 옛 노드가 **이어받기 뒤에 쓴** 더 높은 step 이 뽑혀, 새 시도가 시작한 지점과 갈라진 이력으로 이어갔다
+- 검증: 새 시험 3 — 단위 `a_checkpoint_from_a_superseded_attempt_is_refused_but_an_exact_replay_is_kept` · 통합 `stale_checkpoint_resume.rs` 2
+  (실제 공유 저장소 · 실제 생산자 서명 · 실제 이어받기 두 번). 뮤테이션 3 — 수락 관문 제거 · 재개 관문 제거 · 기준 지점 예외 제거 → 각각 해당 시험 실패.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1670 passed · 0 failed · ignored 4. 독립 검수 d6gate(Codex gpt-6-sol · 기계 검토) 1회차 ACCEPTED — 세 호출 경로(이어받기 · 정지 확인 · 소유자 선점)가 모두 최신 시도에서만 재개 지점을 찾음을 확인
+- 한계: canonical 후보 등록 코드는 없어 관문을 넣을 곳이 없다(grep 범위 `crates/coordinator/src`). 공유 저장소 쓰기 자체는 막지 못한다(계약 그대로)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 14:32 — 실행 알림 계획 조각 5e2e — 재부착 전원 차단 지점 시험 · 5e2 구현 끝(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2e) · 계약 v18n · v18o · v18p 의 시험 목록
+- 스트림: Agent(시험만)
+- 수행: 끝에서 끝까지 시험 1(8 지점 표) — 각 지점이 남기는 원장 · 컨테이너 모양을 만들고(원장 SQL · 가짜 런타임 파일 · 실행 폴더 삭제) 재기동 판정
+  (`reattach_active_rows_for_test`)을 돌린다: 3b 뒤 start 전 · 첫 근거 기록 전 · 갱신 응답 유실(원장 시한 지남) · 정지 결정 영속 직후 · 종료 뒤 보고 보관 전 ·
+  런타임 응답 실패 · 저장 Grant 와 원장 신원 불일치 · 실행 폴더 없음. 모든 지점에서 ① rm 없음(MUST 1) ② 재부착하지 않은 행은 OPEN ③ 런타임이 답하지 않으면
+  kill 도 없음(v18o ②) ④ 대상이 확인되고 돌고 있으면 멈춘다(감시 없는 실행 없음)
+- 검증: Windows `cargo test --workspace -j 1 --no-fail-fast` 1667 passed · 0 failed · ignored 4.
+  ★ 이 시험은 **결과의 안전**을 본다 — 몇 지점은 판정 줄 하나를 빼도 결국 같은 안전한 결과(멈추고 OPEN)가 나와 줄 단위로 가르지 못한다. 줄 단위 판별은
+  5e2c 단위 시험이 맡는다. 실제 docker/podman · 실제 Coordinator · 실제 전원 차단으로는 재지 않았다(배포 경로는 활성화 관문으로 막혀 있다)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 14:18 — 실행 알림 계획 조각 5e2d — 재부착 회차(발견/승인 분리 · 격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2d) · 계약 v18j ①~④ · v18n · v18o ④ ⑤ · v18p ④′
+- 스트림: Agent
+- 수행: **발견** — 기동의 원장 판정(`resolve_unreported_container_row`, 기동 GC 전)이 재부착 후보면 아무것도 바꾸지 않고 ACTIVE 로 둔다(사건 표식을
+  직접 본다 — 조건 ⑧). **승인 · 회차** — `reattach_active_rows` 가 기동 GC · 소유자 패널 뒤 · 밀린 알림 보내기와 새 작업 관문 **앞에서** 같은 판정을 다시 하고
+  `run_reattach_round` 로 간다: Manifest 를 원장의 시작 시각으로 같은 제출자 키 재검증 → 시작 체크포인트 마커 다시 쓰기(조건 ⑥) · 실행 폴더 확인 → 고정 대상
+  손잡이를 패널에 등록("계속 돌리기" 초기화) → 실행 중 갱신 · 끊김 감시 · 우편함(처음 시한은 원장 값 이하 — 새 인자 `initial_self_stop_at`) → 고정 대상 종료 감시.
+  **갱신이 한 번이라도 성공했을 때만** 재부착이다: 끝 처리는 실행 회차와 같은 순서(고정 로그 회수 → 고정 삭제 · 부재 확인 → 원장 결과 → 같은 시도 보고가 보관함에
+  있으면 새 보고 안 함 → 산출물 확정 → 서명 보고 보관 → 삭제 확인이면 CLOSED → 전송). 갱신 성공이 없으면(서명된 거부 · 끊김 · 정지 결정) 멈추기만(정지 결정을
+  먼저 적음) · 지우지 않고 5e1 경로(증거 판정 · OPEN)로. 시험 진입점 `reattach_active_rows_for_test`(배포 바이너리는 알림 스위치가 기동을 거부해 닿지 않는다)
+- 검증: 가짜 대상 런타임(상태 조회 · rm 더함) + 가짜 Coordinator(RENEW 한 번 서명 응답)로 끝에서 끝까지 시험 2 — ① 갱신 성공 → 끝까지 보고 로그 · 지우기 · CLOSED,
+  kill 없음, 모든 명령 `-H` 고정 ② 서명된 거부 → 정지 결정 SIGNED_REFUSAL 먼저 · kill · rm 없음 · OPEN. 갱신 성공 조건을 빼면 ② 가 실패함을 보고 원복.
+  Windows `cargo test -p gputeer-agent -p gputeer-cli -j 1 --no-fail-fast` 509 passed · 0 failed · ignored 3
+  ★ 재지 않은 것: 실제 docker/podman · 실제 Coordinator 와의 재부착(배포 경로는 활성화 관문으로 막혀 있다) · 전원 차단 지점(5e2e)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 13:54 — 실행 알림 계획 조각 5e2c — 재부착 후보 판정(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2c) · 계약 v18n 조건 · v18o ② ③ ⑤ · v18j ②
+- 스트림: Agent
+- 수행: `run_evidence::evaluate_reattach(row, queries, incident_open, now) -> ReattachVerdict` — 발견 단계라 신원 · 상태 **조회만** 한다(아무것도 바꾸지 않는다).
+  순서: ⑦ 정지 결정 · ⑧ 열린 사건 표식(기동은 원장 판정이 표식 검사보다 먼저라 인자로 직접 받는다) → ② 재부착 입력 · 갱신 근거 → ③ 저장 Grant · 마지막 Lease ·
+  원장 행의 job · attempt · node · fence · lease_id 대조(grant ID 는 대조하지 않음) → ④ 대상 신원(다르거나 못 물으면 `stop_allowed = false` — 아무 명령 없이 OPEN) →
+  ⑤ running 만 → v18j ② 원장 시한 · 로컬 만료. 후보면 `ReattachInputs`(대상 · ID · Grant · 마지막 Lease · 시한 · 시작 시각). ★ 부르는 곳은 아직 없다(5e2d)
+- 검증: 단위 시험 2(후보 — 조회 둘만 · 조건마다 따로 막힘 · 대상 신원 다름/못 물음은 stop 불허이고 상태도 묻지 않음 · 얼림은 stop 허락) — 신원 대조를 끄면 시험이
+  실패함을 보고 원복. `cargo test -p gputeer-agent --lib` 161 passed · 0 failed
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 13:50 — 실행 알림 계획 조각 5e2b — 고정 대상 감시 · 정지 · 로그(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2b) · 계약 v18m · v18o ② · v18n "재부착 회차의 끝"
+- 스트림: Agent
+- 수행: 정지 손잡이(`ContainerStopper`)에 런타임 대상 고정 인자 칸 — kill · pause · unpause · 멈춤 확인 inspect 가 모두 그 인자를 앞에 붙인다. 실행 회차가 만드는
+  손잡이는 빈 인자(지금과 같다). 새 공개 함수: `ContainerStopper::pinned`(원장 대상 · 확인한 ID) · `note_observed_exit` · `watch_pinned_exit`(500ms 마다 고정 대상
+  inspect · 연속 5번 실패면 관측 못 함 · 시작 흔적 없는 멈춤은 종료로 안 읽음 — 실행 회차와 같은 규칙) · `save_logs_pinned` · `WorkloadStopper::for_pinned_container`.
+  ★ 부르는 곳은 아직 없다(재부착 회차 5e2d)
+- 검증: 가짜 대상 런타임을 넓혀(상태 inspect · kill · logs) 새 시험 1 — 끝난 컨테이너 코드 7 · kill 한 컨테이너 137 · 없는 컨테이너 관측 못 함 · 로그 받기, 그리고
+  **모든 명령이 `-H <대상>` 으로 고정** — 손잡이의 고정 인자를 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-agent -p gputeer-cli -j 1 --no-fail-fast`
+  505 passed · 0 failed · ignored 3
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 13:33 — 실행 알림 계획 조각 5e2a — 원장 형식 3(재부착 입력 · 정지 결정 영속)(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` §5 3번(5e2a) · 계약 v18m · v18o ① · v18p ①′
+- 스트림: Agent
+- 수행: 노드 원장 형식 2 → 3 — 칸 넷(`reattach_grant` · `started_at_unix_ms` · `stop_decision` · `stop_decision_at_unix_ms`) · 한 트랜잭션 이관(형식 1 은 2 를 거쳐 3) ·
+  종류 · 시각 / Grant · 시작 시각이 한쪽만 있는 행은 열기에서 거부. 3b(컨테이너 ID 기록)와 **같은 UPDATE** 로 검증된 서명 Grant 바이트와 시각을 적는다(이미 있으면 덮지
+  않음). `record_stop_decision`(ACTIVE 만 · 첫 결정이 이긴다). Owner Panel 에 정지 결정 고리 — 소유자 정지 · 끊김 시한 · 서명된 거부 · 우편함 통지(새 `mailbox_refused`) ·
+  다시 시작 실패 뒤 정지가 모두 **정지 손잡이를 부르기 전에** 결정 종류를 넘긴다. Agent 가 고리를 원장에 연결하고, 원장에 못 쓰면 그 컨테이너의 사건 표식(STOP_DECIDED)을
+  쓴다. 둘 다 못 써도 정지는 한다(§0.1 · 계약 v18p 한계). ★ 재부착 자체는 아직 없다 — 이 칸들을 읽는 곳은 5e2c 부터
+- 검증: 원장 시험 3(형식 2 → 3 · 재부착 입력 기록과 덮지 않음 · 정지 결정과 반쪽 행 거부) + 형식 1 이관 시험 갱신, Owner Panel 시험 1(네 길의 결정 종류 — 소유자 정지
+  기록 줄을 빼면 실패함을 보고 원복), Agent 시험 1(원장 기록 · 실패 시 사건 표식). Windows `cargo test -p gputeer-agent -p gputeer-cli -j 1 --no-fail-fast`
+  504 passed · 0 failed · ignored 3. 서식 검사(`cargo fmt --check`)는 저장소 전체의 알려진 빚이라 손대지 않았다(CI 설정에 적힌 대로)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-04 13:16 — 실행 알림 계약 v18n · v18o · v18p — 재부착(5e2) 설계 보강 · 설계 검수 ACCEPTED(브랜치 fork-merge)
+
+- 계약: `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` §5 노드 원장(v18m 초안에 이어) · 계획 §5 3번
+- 스트림: 계약
+- 수행: 독립 검수 s56 이 5e2 에 대해 "v18m 은 필요하지만 충분하지 않다" 고 본 실패 경우들에 답했다 — v18n 재부착 조건(근거 · Grant 신원 대조 · 대상 신원 ·
+  running · 마커) · 풀/풀 밖 근거 시점 · 한 동기화 경계 · 재기동 때 끝나 있는 컨테이너는 재부착 안 함 / v18o 정지 결정을 stop 전에 원장에 영속 · 대상 미확인이면
+  명령 없이 OPEN · grant ID 는 대조 대상 아님(필드별 대조) · 보관함은 해시 이름 · 발견과 승인 분리(GC · 패널 · watermark 뒤) · watermark 규칙 /
+  v18p 정지 결정 기록 실패 시 stop 전에 사건 표식 · 보고 보관 전에 삭제 결과를 원장에 먼저 · 기동의 CLOSED 는 삭제 확인 행에만(지금 코드와 같음)
+  ★ 쓰다가 바로잡은 것: "기동 GC 가 재부착할 작업의 확정 자리를 지운다(§0.3)" 는 과했다 — 작업 출력은 GC 밖 실행 폴더에 있고 지우는 것은 마커뿐이다
+  ★ 남긴 한계: 원장 커밋과 사건 표식이 둘 다 실패한 뒤의 소유자 정지 · 읽히지만 바뀐 출력 · 재기동 때 끝나 있는 컨테이너의 자동 종료 보고
+- 검증: Codex gpt-6-sol 설계 검수 3회차 — v18mn CHANGES_REQUESTED → v18o CHANGES_REQUESTED → v18p **ACCEPTED**(기계 검토 — 사람이 봤다고 쓰지 않는다).
+  코드 구현은 아직 없다(5e2a~5e2e — 계획 §5 3번). check_docs 오류 0
+- 리포트: 계약 문서 변경 기록이 대신한다
+
+---
+
+## 2026-10-04 01:44 — 실행 알림 조각 4~7 독립 검수(Codex) 반영 — 7건 수정(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` §5 · 계약 v18k/v18l/v18m 초안
+- 스트림: Coordinator · Agent
+- 검수: Codex(gpt-6-sol, 본계정) 두 건 — 5c~7c(s56) `CHANGES_REQUESTED` 4건 · 4a~4d+5a/5b(s45ab) `CHANGES_REQUESTED` 3건. 보조 계정은 지정 모델과 그 계정 기본 모델
+  모두 "ChatGPT 계정에서 지원하지 않는 모델" 로 거부해 쓰지 못했다(원인 미확인). 검토자는 기계다 — 사람이 봤다고 쓰지 않는다
+- 수정(s56):
+  ① Resume 판정이 Lease 와 시도의 RUN_UNKNOWN 을 따로 읽어, 사이에 STOP 이 끼면 폐기된 Lease 로 Resumed 를 서명할 수 있었다 → 한 읽기 트랜잭션(`classify_resume_within`)
+  ② 최종 Job 의 알림 — 최종 상태를 계약대로 넷(COMPLETED · FAILED · CANCELLED · ARCHIVED)으로 · 최종 Job 에는 보류를 걸지 않는다 · STOP 은 CANCELLED · ARCHIVED Job 을 그대로 둔다
+  ③ D6 보류 중 관측 못 한 보고에 소유자 선점이 딸려 오면 Lease 가 폐기됐다 → 보류를 남길 때 선점도 하지 않는다
+  ④ 원장에 적는 런타임 대상이 실제 create 대상이라는 보장이 없었다 → create 직후 해석한 고정 대상에서 그 컨테이너 ID 를 새로 찾아 있을 때만 적는다
+     (실행 중 감시 · 정지 명령은 여전히 고정하지 않은 명령이다)
+- 수정(s45ab):
+  ① STOP 이 INTERRUPTED · REPLANNING · RECONCILING Job 에서 InvalidTransition 으로 전체 롤백 → 그대로 두고 자원만 해제(계약 §3 Job 표)
+  ② 4a 의 비원자 이관이 남겼을 "사실만 있고 근거 · GPU 행이 빠진" DB 를 다시 열어도 채우지 않았다 → 빠진 근거 · GPU 행도 옮길 것으로 센다
+  ③ 같은 (시도 · 종류 · 해시)의 근거 행이 있는데 저장 원문이 달라도 묵인했다 → 원문까지 같아야 멱등 · 다르면 `EvidencePayloadMismatch`
+- 검증: 새 시험 3(관측 못 한 INTERRUPTED 보고의 선점 차단 · 반쯤 이관된 DB 복구 · 원문 다른 근거 거부) — 셋 다 고친 줄을 되돌리면 실패함을 보고 원복.
+  ★ **시험하지 못한 것**: s56 ① 의 경합(두 읽기 사이 STOP)은 결정적으로 재현하지 못했다. s56 ② · s45ab ① 은 지금 Job 저장소가 8 상태(SUBMITTED ·
+  PLANNING · QUEUED · STAGING · RUNNING · PAUSED · COMPLETED · FAILED)만 읽어 그 상태의 Job 을 만들 수 없다("unknown job state in durable store") —
+  지금은 일어날 수 없는 경우를 미리 고친 것이다. s56 ④ 는 가짜 런타임으로 대상 불일치를 만드는 시험을 쓰지 않았다(기존 시험 회귀만 확인). Windows `cargo test --workspace -j 1 --no-fail-fast` 1656 passed · 0 failed · ignored 4
+- 5e2(재부착): Codex 판단 "v18m 은 필요하지만 아직 충분하지 않다(영구 stop-only 는 권하지 않음)" — 닫아야 할 경우를 계획 §5 3번에 적었다. 그 전까지 5e1 유지
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 13:40 — 실행 알림 계획 조각 7c — release-held-job 과 늦은 종료 보고(브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 7(7c) · 계약 v18k §6 (3) · §9 "release-held-job 한 명령" · b9 ① · b12 ① · b13 ① · b15 ②
+- 스트림: Coordinator · CLI
+- 수행: `failover::release_held_job_by_operator` + `gputeer release-held-job --control-db --job --operator-statement` — 진술이 비었거나 NOTICE 보류가 하나라도
+  있거나(그것은 STOP_CONFIRMED 만 푼다) 풀 보류가 없으면 거부. 한 커밋에 UNREPORTED 행 제거(감사) · 그 시도에 override · Job 이 최종이면 그 시도의
+  Lease 폐기 · 그 시도가 쥔 예약 해제(해제 사실 + OPERATOR_RELEASE 근거 — 명령 이름 release-held-job). 비최종 Job 은 자원을 건드리지 않고 다음 장애
+  이어받기가 이어받는다. 종료 보고 저장소: 그 시도에 UNREPORTED 보류가 있으면 종료를 관측한 보고는 보류를 풀고 평소대로, 관측 못 한 보고는 전이는
+  평소대로 하되 해제 요청을 버린다(보류 · 예약 · Lease 남김 — 재전송도 같다). release-lost-node 의 판정은 그대로다
+  ★ b12 ① · b13 ① 의 "UNREPORTED 보류 → USER_CANCELLED" 는 Job 취소 코드가 아직 없어 시험하지 못했다(최종 Job 경로는 관측 못 한 FAILED 보고로 만들었다)
+- 검증: 명령줄 시험 1(인자 거부 · 없는 Job · 보류 해제 출력 · 두 번째 거부) · 새 시험 4(거부 셋 / b9 ① 해제 뒤 다음 failover 가 이어받음 · 다시 보류 안 함 / 관측 못 한 보고 → 보류 · 자원 유지 · release-lost-node 거부 →
+  release-held-job 이 최종 Job 자원까지 풀고 두 번째는 거부 / 관측한 보고 → 보류 해제 · 예약 해제). 일부러 망가뜨려 확인 — 관측 여부 분기 · NOTICE 거부를
+  각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 766 passed · 0 failed · ignored 3(그 뒤 명령줄 출력 한 줄을 정적 검사대로 고치고 그 시험만 다시 통과)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 13:27 — 실행 알림 계획 조각 7b — 알리지 못한 채 끊긴 부작용 작업은 자동으로 이어가지 않는다(D6 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 7(7b) · 계약 v18k §9 UNREPORTED_RISK_HELD 두 행 · D6 · b9 ①
+- 스트림: Coordinator
+- 수행: 장애 이어받기가 Lease 만료 + grace 뒤, 선언이 **정확히 PURE** 가 아니고 그 시도에 운영자 override 가 없으면 UNREPORTED 보류만 걸고
+  `FAILOVER_UNREPORTED_HELD` 를 남긴다 — NODE_LOST · STAGING_NODE_LOST 를 실행하지 않는다(Job · Lease · 예약 · 대체 통지 없음). 두 번째 호출은 보류 검사가
+  먼저 건너뛴다(행을 더 만들지 않는다). override 표 `coordinator_attempt_hold_overrides`(release-held-job 이 쓴다 — 7c). 장애 이어받기 단위 시험 픽스처에
+  PURE 선언을 명시했다(그 시험들은 등급을 보기 전에 쓰였다 — 단언은 그대로)
+  ★ **동작이 바뀐다**: 선언이 PURE 가 아닌 작업은 노드가 알리지 못하고 끊기면 사람이 풀 때까지 멈춘다(계약 D6 — 사용자 승인). 선언이지 강제가 아니라
+  PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4). 규범 §2 에 `UNREPORTED_RISK_HELD` 자기 전이 두 행 · 구현 쪽 전이 목록(`job_state.rs`)에도 같이
+- 검증: 새 시험 3(선언 없음 · IDEMPOTENT · SIDE_EFFECTING 각각 보류 한 번 · 자원 그대로 · 후보 제외 / PURE 대조군은 이어받음 / override 있으면 이어받음).
+  일부러 망가뜨려 확인 — D6 분기를 빼면 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1648 passed · 0 failed · ignored 4 · 규범 두 행을 더한 뒤 `-p gputeer-protocol -p gputeer-coordinator -p gputeer-checkpoint` 774 passed · 0 failed(상태 표 대조 포함)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 13:11 — 실행 알림 계획 조각 7a — 서명 검증된 부작용 선언의 투영(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 7(7a) · 계약 v18k §6 (1) · D6 · 이관 b12 ⑤
+- 스트림: Coordinator
+- 수행: 새 표 `coordinator_job_side_effects(job_id · side_effect_class · source)` — Job 행(엄격한 행 모양 검사가 있다)에 칸을 더하지 않고 1:1 표로 뒀다.
+  제출 트랜잭션(`submit_verified_manifest`)이 검증된 Manifest 의 선언을 같은 커밋에 쓴다. 누락 · 모르는 값 · Manifest 없는 제출 · 옛 DB 는 행이 없고
+  SIDE_EFFECTING 과 같이 다룬다. `side_effect_is_pure` 는 정확히 PURE 일 때만 참(표가 없어도 거짓 — 읽기만). 옛 DB 는
+  `project_side_effect_from_reverified` — 권위 디렉터리로 다시 검증했다는 진술 + 저장된 것과 같은 Manifest 일 때만 채운다
+  ★ 이 조각만으로는 동작이 바뀌지 않는다(읽는 곳은 7b)
+- 검증: 새 단위 시험 2(다섯 선언값 · Manifest 없는 제출 · 표 없는 DB / 재검증 — 진술 없음 · 다른 Manifest 거부 · 같은 것만 채움). Windows `cargo test -p gputeer-coordinator -p gputeer-cli -j 1 --no-fail-fast` 631 passed · 0 failed · ignored 3
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 12:57 — 실행 알림 계획 조각 6d — 실행 여부 불명 시도에 온 종료 보고는 증거로만(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6d) · 계약 v18k §2 "옛 형식 보고와의 관계" · §9 취소 effect · 시험 6 · state-machines §3 MUST
+- 스트림: Coordinator · 규범
+- 수행: 종료 보고 저장소가 시도가 RUN_UNKNOWN 이면 보고(어느 버전 · 결과든)를 증거로만 저장한다 — 시도 · Job 을 옮기지 않고 해제 · 선점도 하지 않으며
+  `RECONCILE_NEEDED` 사건을 남긴다. 재전송도 증거로만. 전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다. 규범 §2 의 STAGING · RUNNING -> CANCELLED
+  effect 를 조건부로(최신 시도 RUN_UNKNOWN · 보류 하나라도면 반납 · 해제 · 보류 제거를 하지 않거나 미룬다) — ★ 규범만이다. Job 취소 코드가 아직 없다
+  (`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 찾았고 안 나왔다)
+- 검증: 새 시험 1(옛 FAILED · COMPLETED 두 경우 — 저장 · 상태 불변 · 관문을 다 채운 해제 요청도 무시 · 사건 1 · 재전송 증거로만 · 정지 확인이 푼다). 일부러 망가뜨려
+  확인 — 분기를 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 756 passed · 0 failed · ignored 3 — 재전송 분기도 같은 방법으로 확인
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 12:49 — 실행 알림 계획 조각 6c — 보류된 시도의 Lease 갱신 · Resume 은 RUN_UNKNOWN_HELD(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6c) · 계약 v18k §8 · §9 D8 · 시험 7
+- 스트림: proto · Coordinator · Agent · 규범
+- 수행: `proto/lease.proto` 에 `RENEW_OUTCOME_RUN_UNKNOWN_HELD = 9` · `RESUME_OUTCOME_RUN_UNKNOWN_HELD = 9` 순수 추가(DoD-27 의 REVOKED 와 같은 방식). Lease 저장소의
+  갱신(같은 BEGIN IMMEDIATE) · Resume 판정이 폐기 다음 · 만료 앞에서 "그 Lease 의 시도가 RUN_UNKNOWN" 을 보고 서명된 HELD 로 답한다(만료시각을 늘리지 않음 ·
+  Lease 를 싣지 않음 · 만료된 Lease 도 HELD — D8). 순서 B(먼저 폐기)는 REVOKED 그대로. 같은 연결 갱신 루프의 교착 방지 목록에 9. Agent 는 9 를
+  `RENEW_REFUSED:RUN_UNKNOWN_HELD` · `RESUME_REFUSED:RUN_UNKNOWN_HELD` 로 — 서명된 거부라 멈추기만 하고 되풀이하지 않는다. 첫 진행 신호는 RUN_UNKNOWN 시도를
+  바꾸지 않음을 시험으로 고정(코드는 이미 그랬다). 규범 §5 Lease 표에 HELD_UNKNOWN 세 행(설계 메모 — 구현 대조 없음)
+- 검증: 새 시험 4(순서 A — 갱신 · Resume HELD · 만료 뒤에도 HELD · 정지 뒤 REVOKED / 순서 B — REVOKED 그대로 / 첫 진행 신호 불변 / 대조군 — 보류 없으면 갱신).
+  일부러 망가뜨려 확인 — 갱신 · Resume 의 보류 검사를 각각 빼면 시험이 실패함을 보고 원복. ★ 소켓을 거친 outcome 9 왕복(서명 응답 · Agent 의 멈춤)은
+  프로세스 시험으로 재지 않았다 — 저장소 판정과 숫자 매핑만 시험했다. Windows `cargo test --workspace -j 1 --no-fail-fast` 1642 passed · 0 failed · ignored 4
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 12:34 — 실행 알림 계획 조각 6b — 재배치 차단 보류가 새 시도를 막는다(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6b) · 계약 v18k §2 "새 시도를 만들지 않는다" · §9 guard · 불변식
+- 스트림: Coordinator · 규범
+- 수행: 시도를 만드는 유일한 지점(`staging_store::insert_attempt`)이 같은 트랜잭션에서 보류를 다시 보고 `JobHeld` 로 거부한다(마지막 관문). 후보 선택
+  (`list_schedulable`)이 보류된 Job 을 뺀다. 장애 이어받기는 시도가 RUN_UNKNOWN 이거나 보류가 있으면 되돌리지 않고 `FAILOVER_HELD` 사유를 남긴다. 운영자의
+  release-lost-node 는 보류된 Job 의 예약을 풀지 않는다. 보류 표가 없는 DB 는 보류도 없다(읽기 관문은 표를 만들지 않는다). 규범 §2 다섯 guard 에
+  "재배치 차단 보류가 하나도 없다" 와 불변식 문단
+- 검증: 새 시험 3(후보 제외 · 마지막 관문 거부와 흔적 없음 · 보류가 풀리면 다시 됨 / failover 가 불명 시도를 되돌리지 않음 · 예약 · Lease 그대로 / release-lost-node
+  거부). 일부러 망가뜨려 확인 — 마지막 관문 · failover 검사를 각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 751 passed · 0 failed · ignored 3(상태 표 대조 포함)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 12:26 — 실행 알림 계획 조각 6a — 실행 여부 불명 처리와 재배치 차단 보류 집합(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 6(6a) · 계약 v18k §2 전이 표 · §6 보류 집합 · §7 늦은 도착
+- 스트림: Coordinator
+- 수행: 새 `job_holds`(표 `coordinator_job_holds(job_id, attempt_id, hold_kind)` — NOTICE_RUN_UNKNOWN · UNREPORTED_SIDE_EFFECT_RISK · 같은 시도의 UNREPORTED 를
+  NOTICE 로 치환 · STOP 이 그 시도의 보류만 해제). 알림 저장소가 RUN_UNKNOWN 을 처리한다 — 진입 행이 있는 상태면 시도를 RUN_UNKNOWN 으로, Job 이 최종 상태가
+  아니면 NOTICE 보류, 최신 시도가 아니면(늦은 도착) DUPLICATE_RISK 사건만, 진입 행 없는 상태 · 정지 뒤 다시 불명이면 RECONCILE_NEEDED 사건(표
+  `coordinator_run_notice_events`). STOP 처리는 그 시도의 보류를 같은 트랜잭션에서 푼다
+- 검증: 알림 저장소 시험 11(보류 설치 · 정지가 해제 · 늦은 도착 · 최종 Job · STOP 뒤 낮은/높은 번호 · 같은 시도 치환과 다른 시도 보존 등). 중앙 서버 · 명령줄
+  크레이트 시험 Windows `cargo test -p gputeer-coordinator -p gputeer-cli -j 1 --no-fail-fast` 621 passed · 0 failed · ignored 3 ★ 처음 돌린 전체 시험은 두 실행의 출력이 한 파일에 섞여 집계를 못 했다(실패 표시는 없음) — 바뀐 크레이트만 다시 깨끗이 돌린 값이다
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 12:03 — 실행 알림 계획 조각 5f — 실행 알림 보내기 · ACK(격리 · 활성화 관문 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5f) · §4 활성화 관문 · 계약 v18k §1 ACK · §2 · §5 "보내기" · "ACK 대조"
+- 스트림: Agent · Coordinator
+- 수행: Coordinator — `run_notice_store::answer_run_notice`(검증된 알림을 한 트랜잭션에 받고 · 처리를 마친 **뒤** 서명된 `AttemptRunNoticeAck`: 시도 ·
+  노드 · 세대 · 종류 · 번호 · notice_hash · created · session_nonce echo — 노드가 다르면 거부 · 풀 등록 키만 권위 있는 디렉터리) · REPORT 세션에 FrameType 19
+  분기(`serve_run_notice` — 한 연결 한 프레임) · 이어갈 지점 찾기는 장애 이어받기와 같은 탐색(`failover::resume_body_for`). Agent — `run_notice_session_once`
+  (원장 바이트 그대로 보내고 서명 · nonce · 시도 · 종류 · 번호 · notice_hash 를 대조) · `flush_run_notices_then_gate`(회차 시작 때 번호 순으로 보내고, 실패하면
+  거기서 멈춤, 그 뒤에도 막힌 행이면 새 작업 거부). 알림을 쓰는 Agent 는 막힌 행이 있어도 일단 뜨고(알림을 보내야 풀린다), 그 회차의 남은 컨테이너 정리를
+  건너뛴다(불명인 실행의 컨테이너를 지우지 않게 — MUST 1). ★ 활성화 관문(계획 §4): `--accept-run-notice` · `--send-run-notice` 는 켜는 즉시 기동 거부
+  (ADR-034 강제 코드와 실행 여부 불명 보류 — 조각 6 — 전까지 · 배포 바이너리에 우회 없음) — 기능은 격리 시험이 설정 칸을 켜서 잰다
+- 검증: 새 시험 4(중앙 1 — 실제 control DB 로 ACK 서명 · 해시 · nonce echo · 처리 뒤 예약 해제 · 재전송 created=false · 다른 노드 · 권위 없는 키 거부 /
+  Agent 3 — 가짜 Coordinator 로 정지 확인 ACK → ACKED · 원장 바이트 그대로 · 해시 다른 ACK 거부 · 다시 보낼 것으로 남음 · 불명 ACK 는 풀지 않음 · 스위치 기동 거부)
+  · 기존 기동 시험 둘을 "알림 켜짐이면 기동은 거부하지 않는다" 로 고쳤다. 중앙 스위치 관문 시험 1 더. 일부러 망가뜨려 확인 — 중앙의 노드 대조 · Agent 의 notice_hash 대조를 각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1631 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 11:51 — 실행 알림 계획 조각 5e1 — 재기동 때 돌고 있는 컨테이너는 멈추기만(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5e 를 둘로 — 5e1) · 계약 v18i/j §5 "돌고 있으면 갱신으로 확인한 재부착"
+- 스트림: Agent
+- 수행: `runtime_target::pinned_run_state`(고정 대상 · Running/Paused/NotRunning/Absent) · `pinned_stop`(kill 뒤 **조회로** 멈춤 확인 · 지우지 않음).
+  `run_evidence::stop_if_running_at_restart` — 확인한 ID · 대상 · 신원이 원장과 같을 때만 보고, 돌고 있으면(얼림 아님) 멈춘다. 알림 켜짐 기동의 판정이 이것을
+  먼저 부른다: 멈췄으면 "이미 없음" 이 아니므로 증거 판정 없이 OPEN + RUN_UNKNOWN · 멈추지 못하면 사유("재부착 정지 실패")와 OPEN(계약 v18j).
+  ★ 계약의 B′ 는 서명된 갱신 성공이면 **다시 붙어** 끝까지 감시한다 — 그 재부착은 5e2 로 미뤘고, 그 전까지는 감시 없는 실행을 두지 않으려고 멈춘다
+  (서명된 거부 때의 동작과 같은 보수 · 작업 진척은 잃는다)
+- 검증: 증거 모듈 시험 1 더(돌면 멈춤 · 지우지 않음 · 멈춤 실패 사유 · 얼림 · 멈춤 상태는 건드리지 않음 · 신원이 다르면 상태조차 묻지 않음 · ID 없는 행). 일부러
+  망가뜨려 확인 — 신원 대조를 빼면 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1626 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0(첫 시도는 링커 메모리 부족 — 시험 아님 —
+  으로 멈춰 다시 돌렸다)
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 11:37 — 실행 알림 계획 조각 5d2 — 해제 명령의 OPEN 경로(§4 절차 · 소유자 진술)(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5d2) · 계약 v18k §4 "절차 ①②③" · "ID 없는 행" · §5 "해제"
+- 스트림: Agent · CLI
+- 수행: `run_evidence::release_evidence` — 확인한 ID · 고정 대상이 있는 행: 앞 신원 → 로그 보존(sync) → 그 ID 로 rm -f -v → 새 조회 셋 모두 not-found →
+  뒤 신원(둘 다 원장과 같아야) → CONTAINER_ABSENT_CONFIRMED. 로그를 못 건지면 지우지 않는다 · rm 응답은 믿지 않는다(뒤이은 조회가 판정). ID(또는 대상)
+  없는 행: 소유자 진술(근거 종류 runtime-restarted · listed-only + 문장)이 없으면 런타임에 묻지도 않고 거부, 있으면 이름으로 같은 절차(조회 둘) ·
+  신원 앞뒤가 서로 같아야(원장 값이 있으면 그것과도) → CONTAINER_ABSENT_OWNER_ATTESTED. `container::runtime_target` 에 고정 대상의 로그 보존
+  (`pinned_salvage_logs` — 파일 · 폴더 sync) · 지우기(`pinned_remove`)를 더했다. `lib.rs` — `clear_container_incidents_with`(OPEN 행은 시드가 없으면 거부 ·
+  증거를 못 세우면 아무것도 바꾸지 않음 · 서면 STOP_CONFIRMED + STOP_PENDING 한 트랜잭션 · 진술 해제는 감사(진술 · 시각 · 근거 · 물은 대상 · 신원)를
+  행의 사유 칸에) · owner 라벨은 Agent 와 같은 식(노드 id + 루트 해시). 원장에 대상이 없는 행은 그 행의 런타임 실행 파일 · 종류로 지금 대상을 해석해
+  모든 명령에 명시한다. CLI `container-incidents` 에 `--seed-file` · `--owner-attest-basis` · `--owner-attest-statement`
+- 검증: 새 시험 4(증거 모듈 3 — ID 로 보존 → 지움 → 조회 · 이름으로 남아 있으면 증거 아님 · 로그 못 건지면 안 지움 · rm 응답만 믿지 않음 · 신원 변화 ·
+  진술 없으면 묻지도 않음 · 빈 진술 · 대상 없음 거부 · 진술 경로 순서 / 기동 1 — OPEN 행은 시드 없이 거부 · 시드가 있어도 증거 없으면 아무것도 안 바뀜).
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1625 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0. 일부러 망가뜨려 확인 — 로그를 못 건져도 지우게 · 진술 없이 풀게 하면 각각 시험이 실패함을 보고 원복
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 11:25 — 실행 알림 계획 조각 5d1 — 기동의 §4 자동 증거 · 실행 알림 서명(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5d1) · 계약 v18k §4 "Agent 기동의 자동 증거" · §5 기동 관문 셋째 · 넷째 줄 · v18l
+- 스트림: Agent
+- 수행: 새 `crates/agent/src/run_evidence.rs` — `startup_absence_evidence`(원장 행의 확인한 ID · 연결 대상 · 신원 · 이름이 다 있어야 · 앞 신원 대조 →
+  조회 셋(ID · owner 라벨 안의 이름 · 이름) 모두 not-found → 뒤 신원 대조 · 지우지 않는다 · 하나라도 아니면 증거 없음, 조건이 없으면 런타임에 묻지도
+  않는다) · `build_notice`(원장 행 신원으로 `AttemptRunNotice` 를 만들고 조합 규칙을 먼저 통과시킨 뒤 노드 키로 서명 · notice_hash = BLAKE3(sig_input)).
+  런타임 질문은 `RuntimeQueries` 로 갈라 시험이 흉내를 넣는다. `lib.rs` — `AgentConfig.send_run_notice`(명령줄로 켜는 길은 아직 없다 — ADR-034 관문과
+  함께 5f) · 켜지면 기동의 "시작했고 보고 없는 컨테이너 행" 을 증거로 판정해 STOP_CONFIRMED 알림 + STOP_PENDING 또는 RUN_UNKNOWN 알림 + OPEN
+  (ID 를 적기 전 죽음 → STARTING/START_REQUEST_UNRESOLVED · 그 밖 → RUNNING/EXIT_UNOBSERVED) — 한 원장 트랜잭션. 꺼지면 지금처럼 LOCAL_BLOCKED.
+  보고는 있는데 지움 확인이 없는 행은 그대로 LOCAL_BLOCKED. 기동 거부 문구에 OPEN · STOP_PENDING 을 더했다
+- 검증: 새 시험 5(증거 모듈 4 — 조회 셋 · 고정 대상 · 신원 앞뒤 · 있음/오류/신원 변화 · 조건 없는 행은 묻지도 않음 · 알림 서명 · 해시 · 규칙 위반 거름 /
+  기동 1 — 알림 켜짐에서 ID 없는 행 · ID 있는 행이 각각 서명된 RUN_UNKNOWN 과 OPEN · 다시 띄워도 알림이 늘지 않음). 일부러 망가뜨려 확인 — 뒤 신원 대조를
+  빼면 · 알림 켜짐 갈래를 끊으면 각각 시험이 실패함을 보고 원복. STOP 갈래의 기동 수준 시험은 실제 런타임 흉내가 필요해 증거 모듈 시험으로 대신했다.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` Windows `cargo test --workspace -j 1 --no-fail-fast` 1621 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 11:14 — 실행 알림 계획 조각 5c — 실행 순서 3a/3b/3c · 갱신 근거 기록(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5c) · 계약 v18k §5 "실행 순서" 3a/3b/3c · v18j 근거 칸
+- 스트림: Agent
+- 수행: `container::run_recording` — create 가 돌려준 ID 를 이 시도의 것으로 확인한 **직후 · start 전에** 훅을 부르고, 실패하면 start 하지 않고 그 ID 로
+  지운 뒤 새 조회로 없음을 확인한다(start 전이라 로그 없음 · 확인 못 하면 사람에게 — 기존 사건 표식 경로). 기존 `run` 은 훅 없는 판으로 그대로.
+  `exec::ContainerCreatedHook` 을 실행 정책에 실어 나른다. Agent(`lib.rs`) 의 훅은 런타임 대상을 고정해(5b) `record_runtime_target` 으로 ID · 연결 대상 ·
+  신원을 한 트랜잭션에 적는다 — 고정하지 못하면(원격 podman · 신원 읽기 실패) ID 만 적어 그 행은 자동 증거가 없다. 원장의 `record_runtime_target` 은
+  대상 · 신원을 둘 다 있거나 둘 다 없게 받는다. 실행 전 동기 갱신 · 실행 중 갱신이 성공할 때마다 마지막 서명 Lease 바이트와 화면 감시와 같은 끊김 시한을
+  `record_renewal` 로 적는다(실패해도 실행은 계속 — 앞선 근거가 남아 재부착이 더 일찍 멈출 뿐) · 시한 "없음" 은 원장이 담는 가장 큰 값으로.
+  ★ 계약의 "3b 실패 · 부재 확인 못 함 → RUN_LEDGER_FATAL" 은 지금 경로에서 LOCAL_BLOCKED + 사건 표식(새 작업 거부)으로 간다 — 같은 차단이고 루프를
+  멈추지 않는 차이만 있다
+- 검증: 컨테이너 시험 53(새 2 — 훅은 확인한 ID 를 start 전에 받는다 · 훅 실패면 start 없음 · ID 로 지움 · 없음 확인) · 원장 시험 32(새 1 — ID 만 적기) ·
+  CLI 실제 Agent 시험 r8b 에 "원장 행에 컨테이너 ID 가 남고 대상은 비어 있다" 확인을 더했다. 일부러 망가뜨려 확인 — 실행 정책의 훅 호출을 끊으면 r8b 가
+  실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1616 passed · 0 failed(ignored 4 · --no-fail-fast) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 10:50 — 실행 알림 계획 조각 5b — 런타임 대상 고정 · 계약 v18l(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5b) · 계약 v18k §4 "런타임" → v18l
+- 스트림: Agent · 계약
+- 수행: 새 `crates/agent/src/container/runtime_target.rs` — `resolve_endpoint`(create 전 한 번 — docker 는 `context inspect` 의 엔드포인트 · 로컬 podman 은
+  graphRoot · runRoot · 원격 podman 은 거부) · `RuntimeEndpoint::global_args`(docker `-H` · podman `--root --runroot`) · 원장 글 `to_ledger`/`from_ledger`(모르는
+  모양 거부) · `read_identity`(고정 대상으로 — docker 데몬 ID · podman 호스트 이름 + 두 경로) · `pinned_lookup`(ID · 이름은 `inspect --type container` · owner 라벨
+  목록 안의 그 이름 — not-found 만 없음 · 데몬 오류는 모름). 계약 v18l — 서비스 없는 로컬 podman 에 `--url` 을 주면 증거 명령이 전부 실패해 증거를 영영 못
+  얻는다는 것을 구현 중에 찾아 "명시 인자" 를 저장소 위치로 바꿨고, 원격 podman 은 자동 증거 대상에서 뺐다(보수 — 소유자 해제). 부르는 곳은 5c · 5d
+- 검증: 컨테이너 시험 51(새 4 — docker 대상 한 번 해석 · 모든 증거 명령에 -H · 로컬 podman 고정과 원격 거부 · not-found 만 없음과 데몬 오류는 Err ·
+  원장 글 왕복과 이상한 모양 거부). 가짜 런타임 장치에 대상 고정 흉내 모드를 더했다. 일부러 망가뜨려 확인 — 고정 인자를 빼면 두 시험이 실패함을 보고 원복.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1613 passed · 0 failed(ignored 4 · --no-fail-fast) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다(계약 개정은 v18l 개정 이력 줄)
+
+---
+
+## 2026-10-03 10:50 — 실행 알림 계획 조각 5a — 노드 원장 형식 2(불명 수명주기 · 알림 표 · ACK 대조 · 증거 · 재부착 칸)(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5a) · 계약 v18k §5 "노드 원장" · "해제" · "ACK 대조" · v18j 근거 칸
+- 스트림: Agent
+- 수행: `crates/agent/src/run_ledger.rs` — 형식 2. 상태 OPEN · STOP_PENDING · ACKED(새 작업 차단: ACTIVE · LOCAL_BLOCKED · OPEN · STOP_PENDING — ACKED 에서 풀림),
+  알림 표 `notices`(시도 · 번호 기본키 · 서명 포함 바이트 · notice_hash · 보냄 · ACK), 칸 다섯(연결 대상 · 런타임 대상 신원 · 마지막 서명 Lease · 끊김 시한 ·
+  재부착 사유 — NULL 허용). 형식 1 파일은 열 때 한 트랜잭션으로 올린다(실패하면 형식 1 그대로). 새 함수 — `open_with_run_unknown`(ACTIVE → OPEN + 알림) ·
+  `stop_pending_with_stop`(ACTIVE · OPEN → STOP_PENDING + 알림) · `record_ack`(시도 · 번호 · 종류 · 해시가 모두 같아야 · 최신 STOP 이고 STOP_PENDING 일 때만
+  ACKED · 옛 번호는 표시만 · 불명 ACK 는 풀지 않음) · `unsent_notices` · `mark_notice_sent` · `next_sequence` · `record_runtime_target`(3b — 다른 ID 를 덮지 않음) ·
+  `record_renewal`(v18j). 알림은 컨테이너 행에만(호스트 행의 불명 상태 · 행 없는 알림은 열 때 거부). `mailbox.rs` — STOP_PENDING · ACKED 도 "돌지 않음 확인" 으로
+  NOT_RUNNING. 파일 계층만 — 서명 · 보내기 · 증거 절차를 부르는 곳은 다음 조각(5b~5f)
+- 검증: 원장 시험 31(새 5 — 형식 1 올리기와 실패 시 그대로 · 불명 수명주기와 ACK 대조 · 자동 증거와 불명 ACK · 호스트 · 행 없는 알림 거부 · 3b · 갱신 근거).
+  기존 시험 둘의 "모르는 값" 예를 바꿨다(형식 2 · OPEN 은 이제 아는 값). 일부러 망가뜨려 확인 — STOP_PENDING 차단 · 옛 번호 판별을 각각 빼면 시험이 실패함을 보고
+  원복. Windows `cargo test --workspace -j 1` 1613 passed · 0 failed(ignored 4 · --no-fail-fast) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 05:12 — 실행 알림 계획 조각 4d — 알림 저장소와 정지 확인 처리 한 트랜잭션(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4d) · 계약 v18k §2 저장 · 순번 · 전이 표 · §3 STOP 처리
+- 스트림: Coordinator
+- 수행: 새 `crates/coordinator/src/run_notice_store.rs` — `coordinator_attempt_run_notices`(기본키 시도 · 노드 · 번호 · sig_input · 서명 · notice_hash ·
+  추가 전용)와 `accept_within`(호출자 트랜잭션) · `CoordinatorRunNoticeStore::accept`(BEGIN IMMEDIATE 하나). 검증 순서 — 키 디렉터리 진술 → 조합 규칙 →
+  정지 확인이면 등급(NodeConfirmedStop) → 시도 · 단일 노드 · job · fence 대조 → 같은 바이트면 멱등(created=false · 효과 없음) · 같은 번호에 다른 바이트면 거부 →
+  정지 확인 번호는 저장된 불명 번호보다 커야 함 → 저장. 정지 확인 처리: 시도 → FAILED(STOP_CONFIRMED)(불명 · 진행 중 · 일시정지 · CREATED 는 규범 경로를
+  메모리에서 대조 · 이미 끝난 시도는 바꾸지 않음) · 최신 시도면 Job 이 갈 곳(4c — 이어갈 지점 찾기는 호출자가 넣는다) · Lease 폐기 · 예약 해제(4a — 근거 해시 =
+  ACK 의 notice_hash). 늦은 도착(더 높은 fence 의 시도가 있음)은 Job 을 건드리지 않는다. RUN_UNKNOWN 은 **저장만**(`RunUnknownStoredOnly` — 효과는 조각 6).
+  부르는 production 경로는 없다(계획 §3 — 격리 시험만 · 활성화 관문 전)
+- 검증: 새 시험 6(한 커밋 처리 — 지점 있음/없음 · 재전송 멱등 · 같은 번호 다른 바이트 거부 · 불명 저장만 · 불명 뒤 번호 규칙 · 늦은 도착 · 이미 끝난 시도 ·
+  거부 넷이 아무것도 안 남김 — 처리 도중 실패도 알림 행까지 되돌림). 일부러 망가뜨려 확인 — 번호 규칙 · 최신 시도 판별 · Lease 폐기를 각각 빼면 해당 시험이
+  실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1604 passed · 0 failed(ignored 4) · 새 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 05:01 — 실행 알림 계획 조각 4c — 규범 새 두 행(STOP_CONFIRMED_AFTER_UNKNOWN) · 정지 확인 뒤 Job 이 갈 곳(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4c) · 계약 v18k §3 항목 3 · §9 새 두 행
+- 스트림: Protocol · Coordinator
+- 수행: `docs/protocol/state-machines.md` §2 에 `STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN` · `RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN`
+  두 행, `job_state.rs` 표에 같은 trigger. `job_store.rs` 새 `follow_stop_confirmed`(호출자 트랜잭션) — RUNNING · STAGING 은 이어갈 지점이 있으면
+  INTERRUPTED → REPLANNING → QUEUED(되돌아온 횟수 +1 · 지점 저장), 없으면 INTERRUPTED → FAILED(NO_COMMITTED_CHECKPOINT). 경로는 trigger 까지 표와 대조한다.
+  ★ STAGING 도 큐로 바로 가지 않는다 — 실행 여부 불명은 "돌았을 수 있다"(D3)라 장애 이어받기의 STAGING_NODE_LOST 와 다르다.
+  QUEUED · FAILED · PAUSED · PLANNING · COMPLETED 는 그대로(아무것도 쓰지 않음), SUBMITTED 는 손상으로 거부. 보류 해제는 조각 6, 부르는 곳은 4d
+- 검증: 새 시험 2(두 상태 × 지점 있음/없음 · 저장 행을 다시 읽어 모양 검사 통과 · 이미 옮겨간 Job 그대로) · 규범 표 대조 14 통과. 문서의 새 행 하나를 지우면
+  대조 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1598 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 04:48 — 실행 알림 계획 조각 4b — 운영자 해제를 같은 해제 기록으로 · 옛 운영자 기록 이관 · 4a 보조 검수 반영(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4a → 4b) · 계약 v18k §3 b16 ③ · b15 ①
+- 스트림: Coordinator
+- 수행: `reservation_release.rs` — 운영자 해제 근거 OPERATOR_RELEASE 의 payload 고정 인코딩(`operator_release_payload` — 명령 · 진술 · node · job · attempt ·
+  fence · 시각, 문자열 u32 BE 길이 + UTF-8 · 정수 u64 BE)과 `release_by_operator_within`(호출자 트랜잭션 · 시도 행에서 job · fence · 단일 노드 대조 · 예약은 MustHold).
+  `failover.rs` release-lost-node 는 **판정 그대로** 기록 방식만 바꿨다 — 예약을 지우는 같은 커밋에 해제 사실 + OPERATOR_RELEASE 근거, 옛 `coordinator_operator_releases`
+  에는 더 쓰지 않는다. 옛 운영자 기록은 열 때 옮긴다(fence 는 시도 표에서 · 시도 행이 없으면 `MigrationAttemptMissing` 으로 멈춤 · 옛 표에 GPU 목록이 없어 옮긴 사실의
+  GPU 목록은 비어 있다 · 옛 표는 지우지 않는다).
+  4a 보조 검수(아래) 반영 — ① 이관 두 단계를 savepoint 하나로 묶었다(전에는 문장마다 커밋돼 사실만 남고 근거가 빠질 수 있었다) ② 정지 확인 해제가 종료 증명 등급을
+  값으로 받는다 — 새 `RuntimeStopProof::NodeConfirmedStop`(신뢰망 전용 자기보고)만 통과, 종료 보고 경로에 그 값을 쓰면 `StopProofGradeMismatch` ③ 모듈 머리말의
+  "오늘 정직한 호출은 전부 거부" 에 공개 풀 기준이라는 단서
+- 검증: 해제 시험 35건(새 9 — 경로별 등급 · 다른 신원 충돌 · 정지 확인 뒤 늦은 종료 보고 · 이관 두 번에 나눠도 한 번씩 · 이관 중간 멈춤이면 아무것도 안 남음 ·
+  옛 운영자 기록 이관 뒤 늦은 정지 확인 · payload 바이트 · release-lost-node 의 새 기록 · 살아 있는 시도 거부 그대로). 일부러 망가뜨려 확인 — savepoint 되돌리기를 빼면
+  "중간 멈춤" 시험이, 신원 비교를 빼면 "충돌" 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1596 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 검수: 조각 4a 의 Codex 독립 검수는 사용량 한도(2026-10-04 12:00 재개)로 못 돌렸다 → **보조 검수를 Claude 서브에이전트로 돌렸다(다른 모델 아님 — 대체가 아니라
+  보조)** — `CHANGES_REQUESTED`(결함 2 · 시험 빈칸 3) → 이 커밋에 전부 반영. Codex 검수(4a + 4b)는 한도가 풀리면 그대로 돌린다
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 04:27 — 실행 알림 계획 조각 4a — 예약 해제 근거 일반화 · 해제 기록을 사실 · 근거로 나눔(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(보조 에이전트 조사의 4단계 분할 중 4a) · 계약 v18k §3 "해제 증거 일반화" · "해제 기록을 둘로"
+- 스트림: Coordinator
+- 수행: `reservation_release.rs` — 해제 기록을 `coordinator_release_facts`(시도마다 한 행 · 종료 보고 해시 없음) · `coordinator_release_fact_gpus` ·
+  `coordinator_release_evidence`(추가 전용 · 종류 TERMINAL_REPORT / STOP_CONFIRMED / OPERATOR_RELEASE · 해시 · payload 원문)로 나눴다. 옛 표
+  `coordinator_reservation_releases`(종료 보고 해시 필수)는 더 쓰지 않고, 열 때마다 멱등으로 새 표에 옮긴다(근거 payload = 저장된 종료 보고 바이트 · 못 찾으면 열기 거부).
+  두 종료 보고 경로는 공통 핵심(`record_release_within`)을 쓰고 동작은 같다 — 예외 하나: 같은 신원을 **다른 근거**로 다시 풀면 전에는 충돌이었고 이제 "이미 해제됨" + 근거
+  행 추가다(계약 b15 ①). 새 공개 함수 `release_for_stop_confirmed_within`(호출자 트랜잭션 · 키 디렉터리 진술 · STOP_CONFIRMED · 조합 규칙 · durable 시도와 job · node ·
+  fence 대조 · 근거 해시 = sig_input 의 BLAKE3) — 예약이 없거나 다른 시도의 것이면 오류가 아니라 `NothingToRelease`(아무것도 지우거나 적지 않음 · 다른 시도의 예약은
+  절대 지우지 않는다). 부르는 곳은 아직 없다(조각 4d)
+- 검증: 해제 시험 26건(새 5 — 정지 확인으로 해제 · 관문 넷 거부 · 늦은 정지 확인은 이미 해제됨 + 근거 · 예약 없음 / 다른 시도 · 옛 기록 이관과 근거 없을 때 거부).
+  이미 해제된 경우의 근거 추가를 빼면 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1587 passed · 0 failed(-j 1 — -j 2 는 페이징 파일 부족으로 빌드가 끊겼다) · 서식 통과 · 바뀐 줄 clippy 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-03 02:56 — 실행 알림 계약 v18k 독립 검수 ACCEPTED(브랜치 fork-merge)
+
+- 수행: 재검수 v18k(Codex gpt-6-sol) `ACCEPTED`(기계 검수). Codex 합의 B′(갱신으로 확인한 재부착)가 들어간 판이다. 계약 상태 줄에 적었다
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:54 — 실행 알림 계약 v18k — 검수 v18j(재부착의 시한 감시를 세션 앞에)(브랜치 fork-merge)
+
+- 계획: 직전 항목(b97b274 — v18j)의 재검수 v18j `CHANGES_REQUESTED` 1건
+- 수행: 재기동의 재부착 순서에서 원장 끊김 시한의 감시를 우편함 · 갱신 세션보다 **먼저** 독립으로 건다(세션이 늘어져도 시한에 stop) · 정지가 시작된 뒤 도착한 갱신
+  성공은 재부착하지 않는다(같은 잠금에서 판정) · 시험
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:50 — 실행 알림 계약 v18j — 검수 v18i 반영(재부착의 근거 칸 · 순서 · 기동 정리 제외 · 갱신 결과별 전이)(브랜치 fork-merge)
+
+- 계획: 직전 항목(0290b36 — v18i)의 재검수 v18i `CHANGES_REQUESTED` 4건 — 재부착 방향 자체는 타당하다고 봤다
+- 수행: ① 실행 중 갱신 성공마다 원장 행에 마지막 서명 Lease · 끊김 시한을 적고 재기동은 그 값만 쓴다(다시 계산해 늦추지 않는다) · 시한 경과 · 로컬 만료면 묻지 않고 stop
+  ② 재부착 · OPEN · LOCAL_BLOCKED 행의 컨테이너는 기동 정리가 지우지 않는다 · §4 · 시험 8 에 재부착 예외 ③ 순서 — 실행 목록 등록(소유자 즉시 정지 먼저) → 시한 확인 →
+  우편함 비우기 → 갱신 · 소유자 "계속 돌리기" 는 Auto 로(화면 표시) · 재부착 회차는 그 시도의 실행 회차(FRESH 없음) ④ 거부 넷(REVOKED · SUPERSEDED · MAX_DURATION · RUN_UNKNOWN_HELD)은
+  stop 만 + 사유 칸 · 정지 실패는 OPEN + RUN_UNKNOWN(사유)
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:43 — 코덱스 합의 — 실행 중 죽은 노드의 불명 처리 개선(B′ 갱신으로 확인한 재부착) → 실행 알림 계약 v18i(브랜치 fork-merge)
+
+- 계획: 사용자 요청 "4번 같은 케이스가 더 있는지 · 개선법이 최선인지 코덱스와 같이 검토하고 웹서치로 찾아보고 합의봐서 정해"
+- 수행: 웹 조사(Nomad 재부착 · 재연결 비교 / Kubernetes non-graceful shutdown 의 사람 taint / kubelet orphan 정리 / Docker live-restore · 삭제 중 상태) →
+  Claude 1회차 의견을 먼저 고정 → Codex(본계정 gpt-6-sol) 1회차 A(지금 안 유지) · Claude D → 2회차 둘 다 **B′** 로 합의.
+  B′: 재기동 때 확인한 ID 의 컨테이너가 돌고 있으면 그 시도의 Lease 로 갱신을 먼저 해 — 서명된 성공이면 재부착(갱신 · 끊김 시한 · 우편함 감시 재개), 거부 · 통지면
+  지우지 않고 stop 만, 연결 실패면 원장의 마지막 만료로 계산한 시한에 스스로 stop. 돌고 있지 않으면 v18h 그대로("이미 없음" 만 자동 · 남으면 소유자).
+  런타임 밖 프로세스 · NVML 확인은 필수 조건에서 뺐다(검증 안 된 기준 · 실측 과제). 경우 목록 다섯을 결정 기록에 · 계약 v18i 와 시험에 반영.
+  ★ 알트 계정은 gpt-6-sol · gpt-5.6-sol 모두 "ChatGPT 계정에서 지원 안 함" 으로 실패해 한 계정으로만 합의했다
+- 결정 기록: 세션 scratchpad `consensus/…_불명정리_개선법/decision.md`(q · q_r2 · claude_r1 · Codex 답 포함)
+- 검증: `check_docs.py` 오류 0. v18i 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:24 — 실행 알림 계약 v18h 독립 검수 ACCEPTED(브랜치 fork-merge)
+
+- 수행: 재검수 v18h(Codex gpt-6-sol) `ACCEPTED`(기계 검수). 계약 상태 줄에 적었다. 사용자 결정(2026-10-03 — MUST 1 자동 삭제 예외 없음)이 반영된 판이다
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:23 — 실행 알림 계약 v18h — 검수 v18g 의 남은 문장 셋(브랜치 fork-merge)
+
+- 계획: 직전 항목(b02dd81 — v18g)의 재검수 v18g `CHANGES_REQUESTED` — 핵심 수정은 반영됐고 낡은 문장 셋이 남았다
+- 수행: 상태 줄(MUST 1 예외 "확인 대기" → 예외를 더하지 않는다) · 전원 차단 경계("남은 컨테이너 정리로 판정" → 지우지 않는 조회 · 증거 판정이 먼저) · 소유자 해제 문구("같은 절차" → 같은 판정 기준 · 해제 명령의 동작)
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:20 — 실행 알림 계약 v18g — 검수 v18f 반영(최종 부재의 뜻 · 런타임 복원 범위 · 경로별 문구)(브랜치 fork-merge)
+
+- 계획: 직전 항목(fa12ffc — v18f)의 재검수 v18f(Codex gpt-6-sol) `CHANGES_REQUESTED`. "확인한 ID 의 최종 부재" 자체는 타당하다고 봤다
+- 스트림: Protocol(계약 문서만)
+- 수행: "최종 부재" = 조회가 not-found 로 답한 것만(조회에 나오면 삭제 진행 중 · 멈춤 · 생성됨 모두 부재 아님) · 런타임 컨테이너 체크포인트 복원은 범위 밖(Agent 는 쓰지 않는다 ·
+  보장하지 않는 것) · v18e 의 "지운 뒤 확인" 전제가 남은 §1 · §4 · §5 해제 줄 · 시험 8(모순) · 9 · 18 을 경로별(해제 명령 · Agent 기동)로 고침 · §1 의 낡은 "계약층은 1 만
+  받는다" 를 62a6d6b 개정 완료로 정정(조각 4 조사 보조 에이전트가 짚었다)
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 02:15 — 사용자 확인 · 결정 기록 — 제안 셋 문구 확인 · 자동 삭제 예외는 넣지 않음 → 실행 알림 계약 v18f(브랜치 fork-merge)
+
+- 계획: 사용자 답(이 대화에서 직접) — "1~3은 확인. 4번 예외는 넣지 마. 4번 더 자세히 설명부터 해"
+- 스트림: Protocol(계약 · 규범 문서만)
+- 수행: ① 미리 알린 끊김 · 서명된 재배치 유예 · 대체 통지 우편함 — 세 제안의 승인 절에 **사용자 문구 확인**을 적었다(전에는 다른 세션이 전한 승인이라 적지 않았다)
+  ② 규범 `state-machines.md` §3 MUST 1 에 넣었던 "Agent 기동의 자동 삭제" 예외를 **뺐다**(사용자 결정) ③ 실행 알림 계약 v18e → v18f — Agent 기동은 아무것도 지우지
+  않고, 확인한 ID · 라벨 · 이름으로 물어 **이미 없을 때만** 자동 증거(지워진 컨테이너에는 늦은 start 가 적용될 수 없다 — 누가 지웠든 같다). 컨테이너가 남아 있으면
+  OPEN + RUN_UNKNOWN → 소유자 해제 명령(확인한 ID 로 지우는 것은 소유자의 명시적 정리 — MUST 1 의 기존 예외). 잃는 것(자동으로 안 풀리는 경우)을 계약에 적었다 ·
+  기동 순서(원장 판정을 남은 컨테이너 정리보다 먼저 · 열린 행의 컨테이너는 정리가 지우지 않는다) · 시험 8 · 18 · MUST 3 문구
+- 검증: `check_docs.py` 오류 0. v18f 독립 검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:47 — 실행 알림 계약층에 소유자 진술 정지 증거(값 2) 추가 — 계약 v18 §1 의 선행 개정(브랜치 fork-merge)
+
+- 계획: 계약 v18e §1 "값 2 의 구현 조건 — Agent 해제 명령 조각 전에 계약층을 먼저 개정"
+- 스트림: Protocol
+- 수행: `proto/artifact.proto` RunStopEvidence 에 `RUN_STOP_EVIDENCE_CONTAINER_ABSENT_OWNER_ATTESTED = 2`(enum 순수 추가 · 기존 값 · 서명 불변). 조합 규칙은 STOP_CONFIRMED 의
+  정지 증거로 1 · 2 를 받고 3 은 여전히 거부 · RUN_UNKNOWN 에 2 를 실으면 모양 위반. 벡터 v47d(95 → 96) · 스키마 지문. 보내거나 받는 코드는 아직 없다(조각 4 · 5)
+- 검증: 프로토콜 · 프레임 시험 통과 · 참조 구현 재생성 대조 96개 일치 · check_schema · check_docs 오류 0 · 워크스페이스 빌드 경고 0
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:25 — 실행 알림 계약 v18e 독립 검수 ACCEPTED(브랜치 fork-merge)
+
+- 계획: 구현 계획 v3 조각 3(계약 v18 문서) 완료 조건 — 독립 검수 · 사용자 문구 확인
+- 수행: 재검수 v18e(Codex gpt-6-sol) `ACCEPTED` — v18a~v18d 의 지적이 모두 닫혔고 남은 모순이 없다고 봤다(기계 검수 · 사람이 봤다고 쓰지 않는다). 계약 상태 줄에 적었다.
+  ★ 남은 것: **사용자 문구 확인** — 특히 규범 `state-machines.md` §3 MUST 1 에 더한 예외(기동이 로그를 먼저 보존한 뒤 그 시도의 컨테이너 하나를 지운다)
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:22 — 실행 알림 계약 v18e — 검수 v18d 의 문구 두 곳(서명은 키 서명까지 · 보장 줄)(브랜치 fork-merge)
+
+- 계획: 직전 항목(599ac9f — v18d)의 재검수 v18d `CHANGES_REQUESTED` — 대상 신원 · 진술 문구는 닫혔다고 봤다
+- 스트림: Protocol(계약 문서만)
+- 수행: §1 — 노드 서명이 증명하는 것은 "그 노드의 키로 서명됐다" 까지(어느 프로그램인지도 증명하지 않는다) · "보장하지 않는 것" 의 해제 줄을 stop_evidence 값별 진술로
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:19 — 실행 알림 계약 v18d — 검수 v18c 반영(서명이 증명하는 범위 · 기록 없는 대상 신원 대조 · 진술 문구)(브랜치 fork-merge)
+
+- 계획: 직전 항목(06b7e49 — v18c)의 재검수 v18c(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건(원장 칸 지적은 닫혔다고 봤다)
+- 스트림: Protocol(계약 문서만)
+- 수행: ① 노드 서명이 증명하는 것은 "그 노드 시드를 가진 프로그램이 서명했다" 까지로 고쳤다 — 진술 내용은 stop_evidence 값이 가른다(1 기계 절차 · 2 소유자 진술)
+  ② 대상 신원 기록이 없는 행(이관 · v18 전)의 소유자 해제는 앞 · 뒤 두 번 읽은 값을 **서로** 대조하고 그 값을 감사에 적으며, "그 Agent 가 쓴 런타임이다" 는 진술에 맡긴다
+  ③ 진술 문구를 "늦은 생성이 불가능하다" 에서 "없음을 확인했고 **늦게 생길 위험을 알고 떠맡는다**" 로 — 근거 종류(런타임 재시작 · 목록 확인)는 위험을 줄인 정도의 기록이다 · 시험 9
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:15 — 실행 알림 계약 v18c(검수 v18b 반영) · 우편함 전 구간 리눅스 실측(x600 WSL2 · root)(브랜치 fork-merge)
+
+- 계획: 직전 항목(ce3d5b5 — v18b)의 재검수 v18b(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건 · 사용자 지시 "리눅스 테스트도 다시"
+- 스트림: Protocol(계약 문서) · 시험
+- 수행(계약): ① 원장 필드 목록에 연결 대상 · 대상 신원을 더하고 값이 없는 행(v18 전 Agent · 이관 · 3b 전 죽음)은 자동 증거 없이 OPEN ② 소유자 진술 해제(stop_evidence 2)를
+  §1 메시지 정의 · proto enum · 서명 설명 · 보장 절에 넣고, 계약층 개정 조건(Agent 해제 명령 조각 전에 enum 추가 · 개정 전 Coordinator 는 거부 — fail closed) ·
+  진술 내용(근거 종류 — 런타임 재시작 · 직접 목록 확인) · 연결 대상이 없는 행의 조회 대상 · 남는 위험 · 시험 9 · 15 를 정했다
+- 수행(리눅스): 원격 리눅스 서버는 여전히 접속 시간 초과다. 그래서 x600 WSL2(2026-09-25 허가 범위 — E: 아래만)에 예전 시험 폴더의 저장소에서 새 작업 폴더
+  `/mnt/e/gputeer-work/build/fork-merge-mailbox` 를 갈라(기존 폴더는 건드리지 않음 · 커밋 묶음으로 전달) e5e3e75 를 시험했다 — systemd 임시 서비스로 돌렸다
+- 검증: x600 WSL2 Linux **root** `cargo test --workspace --exclude gputeer-runtime-windows -j 6` → **1517 passed · 0 failed · ignored 4**(약 16분 — 빌드 포함).
+  ★ root 로 잰 값이다 — 비-root 리눅스 통과로 세지 않는다(CLAUDE.md §4). 비-root 는 재지 못했다(그 WSL 에 일반 사용자가 없다). 실제 프로세스 우편함 시험 중
+  실행 중 정지 시험은 윈도 전용(cmd 작업)이라 리눅스에서는 돌지 않았다. 계약 문서는 `check_docs.py` 오류 0
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:10 — 실행 알림 계약 v18b — 검수 v18a 반영(런타임 대상 고정 · 자동 삭제의 규범 예외 · ID 없는 행)(브랜치 fork-merge)
+
+- 계획: 직전 항목(78e67a1 — v18 초안)의 독립 검수 v18a(Codex gpt-6-sol) `CHANGES_REQUESTED` 3건
+- 스트림: Protocol(계약 · 규범 문서만)
+- 수행: ① 증거 절차의 모든 명령에 create 때 해석한 **연결 대상**을 명시 인자로 준다(docker `-H` · podman `--url`) · 대상 신원(docker 데몬 ID · podman host.hostname ·
+  저장소 위치)을 rm **앞**과 조회 **뒤** 두 번 읽어 둘 다 같아야 한다 ② 기동의 자동 rm 이 규범 MUST 1(불명 동안 자동 삭제 금지)과 충돌 — MUST 1 에 좁은 예외를
+  더했다(그 시도의 컨테이너 하나 · **로그를 먼저 보존**한 뒤 · 확인한 ID · 고정한 대상 · 이미 열린 사건에는 넓히지 않는다). ★ 이 예외는 **사용자 문구 확인 대기**로
+  표시했다 ③ 3b(ID 기록) 실패 — start 하지 않고 지운 뒤 부재 확인이면 CLOSED, 아니면 루프 멈춤 · ID 없는 행은 자동 증거 없음(OPEN) · 소유자 해제는 이름 · 라벨로
+  같은 절차를 밟고 **소유자 진술**을 요구(stop_evidence `CONTAINER_ABSENT_OWNER_ATTESTED = 2` — enum 추가 · 계약층 개정 필요) · 해제 증명 등급 이름을
+  `NodeConfirmedStop` 으로(자동 증거는 소유자가 내지 않는다) · 시험 18 보강
+- 검증: `check_docs.py` 오류 0. 재검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:02 — 실행 알림 계약 v18 초안 — 정지 확인 증거를 Agent 기동도 밟는다(결정 D) · 규범 MUST 3 문구 정렬(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` v3 §1 · 조각 3(계약 v18 문서). 결정 D(2026-09-30 사용자 승인 — "사람이 확인해야만 풀리는 설계는 잘못")
+- 스트림: Protocol(계약 · 규범 문서만 — 코드 없음)
+- 수행: 계약 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` v17 → v18. ① §4 정지 확인 증거를 해제 명령뿐 아니라 **Agent 기동**도 같은
+  절차로 밟는다 ② 자동 증거의 조건 — 원장에 확인한 컨테이너 ID(create 결과를 start 전에 커밋) · 런타임 대상 신원(docker 데몬 ID · podman 저장소 위치 · 원격 소켓)이
+  create 때와 같다 · rm 뒤 따로 보낸 새 조회 셋(ID · owner 라벨 · 이름)이 모두 "없음" — 하나라도 아니면 증거 없음 ③ §5 기동 관문 셋째 갈래 — 증거가 서면
+  STOP_CONFIRMED + STOP_PENDING(RUN_UNKNOWN 없이), 못 서면 v17 그대로 OPEN + RUN_UNKNOWN(그때만 사람) ④ 실행 순서 3 을 create · ID 커밋 · start 로 가름 ⑤ 시험 8 기대값 ·
+  시험 18(조건마다 OPEN) ⑥ 받아들인 한계(부재는 "지금 멈췄다" · 외부 부작용 미해결)를 보장하지 않는 것에. 알림이 꺼진 동안의 LOCAL_BLOCKED 는 바꾸지 않았다(열린 질문).
+  규범 `state-machines.md` §3 의 MUST 3 끝 줄("벗어나는 길은 소유자의 해제뿐")이 2026-09-30 승인 행과 어긋나 있어 맞췄다
+- ★ v17 백업은 세션 scratchpad `_backup/…_실행알림계약_v17/`(git 에도 있다)
+- 검증: `check_docs.py` 오류 0. 독립 검수는 이 커밋 뒤
+- 리포트: 계약 문서가 대신한다
+
+---
+
+## 2026-10-03 01:01 — 스케줄러 오류 문구에 끼어든 공백 고침 · 우편함 조각 4b 고침 재검수 mbb2 ACCEPTED(브랜치 fork-merge)
+
+- 계획: 문서 검사(`scripts/check_docs.py`)의 주장 검사 "문자열 안에 줄이음 누락으로 끼어든 12칸 이상 공백이 없다(결함 204)" 가 실패했다
+- 스트림: CLI
+- 수행: `scheduler-tick` 의 `FAILOVER_NEEDS_COORDINATOR_KEY` 문구(우편함 조각 2 · a392346 에서 넣었다)가 줄이음 `\` 없이 두 줄로 이어져 문자열 안에 공백 14칸이
+  들어갔다. 한 줄로 고쳤다. ★ 조각 2 를 커밋할 때 문서 검사를 돌리지 않아 놓쳤다 — 같은 무늬는 저장소 전체에서 이 한 곳뿐이었다(같은 정규식으로 crates 전체 검색)
+- 검증: `check_docs.py` 오류 0 · `cargo test -p gputeer-cli --test scheduler_tick failover` 통과(거부 문구 앞머리 대조) · 서식 검사 통과
+- 그 전 항목(e5e3e75 — 실행 종료가 우편함 감시를 상한만큼만 기다린다)의 재검수 mbb2 — `ACCEPTED`(기계 검수)
+- 리포트: 없음(한 줄 고침)
+
+---
+
+## 2026-10-03 00:35 — 우편함 조각 4b 검수 mbb1 반영 — 실행 종료가 우편함 감시 스레드를 상한(2초)만큼만 기다린다(브랜치 fork-merge)
+
+- 계획: 직전 항목(fde4820)의 독립 검수 mbb1(Codex gpt-6-sol) `CHANGES_REQUESTED` 1건. 재접속마다 비우기(mba1)는 닫혔다고 봤다
+- 스트림: Agent · 시험
+- 수행: 실행이 끝난 뒤 우편함 감시 스레드를 **끝없이** 기다렸다 — 스레드가 MAILBOX 세션의 I/O 중이면(연결 · 읽기 · 쓰기 시한 각 10초) 또는 정지 뒤 마지막 답을
+  보내는 중이면 종료 보고 · 예약 해제가 수십 초 늦어질 수 있었다(제안 §4 "우편함은 새 작업만 막는다" 와 어긋남). 이제 스레드가 끝나면 신호를 보내고, 종료 처리는
+  2초까지만 기다린 뒤 놓는다(`MAILBOX_WATCH_DETACHED` — 보내던 답은 다음 회차 전 비우기가 다음 배달로 확인한다). 실제 프로세스 시험의 Agent 대기에도 60초 상한을
+  두고, 통지 뒤 끝나야 하는 시한을 20초 → 25초로 늘렸다(30초 작업과 구별되면서 느린 기계 여유)
+- 검증: 단위 시험 — 3초 묶인 스레드를 200ms 상한으로 놓고 2초 안에 돌아온다 · 곧 끝나는 스레드는 합류한다. 상한을 100배로 늘리면 실패함을 확인 뒤 원복.
+  Windows `cargo test --workspace -j 2` 1581 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-03 00:15 — 대체 통지 우편함 조각 4b — 실행 중 감시(그 작업의 통지가 오면 멈추고 STOPPED) · 4a 검수 mba1 반영(재접속마다 비우기)(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §4(실행 중 묻기 · 처리) · 규칙 3. 직전 항목(3541d1c)의 독립 검수 mba1(Codex gpt-6-sol)
+  `CHANGES_REQUESTED` 1건
+- 스트림: Agent · 런북
+- 수행: ① (mba1) 우편함 비우기가 재접속 루프 **앞에서 한 번**뿐이라, 첫 FRESH 가 일시적으로 실패한 뒤의 재접속은 우편함을 다시 보지 않았다 — 이제 **모든** FRESH
+  연결 직전에 비운다(첫 연결 · 재접속마다 · 재접속 끈 길도). FRESH 를 연 뒤가 아니라 열기 전이다 — 풀 Coordinator 는 순차 리스너라 열린 FRESH 가 우편함 연결을
+  막는다. ② 실행 중 우편함 감시 스레드 — 갱신 스레드와 **따로** 갱신 주기로 MAILBOX 세션을 열고, 갱신이 거부 · 로컬 만료로 끝나도 실행이 끝날 때까지 간다.
+  지금 도는 이 시도의 통지면 서명된 거부와 같은 경로(`renew_refused` — 소유자 "계속" 도 무시)로 멈추게 하고 답을 보류했다가, 정지가 **성공한 뒤에만** STOPPED 로
+  답한다(요청 뒤에는 200ms 마다 · 실행이 끝날 때 한 번 더). 다른 시도의 통지는 회차 전과 같다(원장)
+- ★ 아직 없는 것: 제안 시험 4 그대로의 실제 프로세스 흐름(소유자 "계속 돌리기" PURE → 끊김 → 장애 이어받기 → 재연결 → 통지 → STOPPED → 늦은 종료 보고가 옛 예약을
+  푼다) — 이번 시험은 장애 이어받기 없이 실행 중에 통지만 넣는다. 각 조각(이어받기의 통지 · 배달 · 실행 중 정지 · 늦은 보고의 예약 해제)은 따로 시험했다
+- 검증: 가짜 Coordinator 단위 시험 — FRESH 가 끊겨 재접속할 때 Hello 순서가 MAILBOX · FRESH · MAILBOX · FRESH(첫 연결만 비우게 되돌리면 실패). 실제 프로세스 —
+  약 30초짜리 작업이 도는 중에 그 시도의 통지를 넣으면 실제 Agent 가 멈추고 STOPPED 로 답해 Coordinator 가 ack_action=STOPPED 로 커밋한다(통지 뒤 20초 안 —
+  시험 전체가 약 4초에 끝났다 · 1회 측정). 감시 스레드를 끄면 작업이 30초를 다 돌아 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1580 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0.
+  ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 23:59 — 대체 통지 우편함 조각 4a — Agent 가 일을 받으러 가기 전에 우편함을 비운다(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §2 · §4(회차 전 처리 · NOT_RUNNING 확인 · 기동 거부)
+- 스트림: Agent · CLI(agent-loop) · 런북
+- 수행: 새 모듈 `crates/agent/src/mailbox.rs` — MAILBOX 세션 클라이언트(Hello(MAILBOX) · 배달의 겉 서명과 **안의 통지 서명을 각각** Coordinator 키로 검증 ·
+  조합 규칙 · 통지마다 처리 · 답 · 수신 확인 검증). `--use-mailbox true` 면 FRESH 를 열기 **전에** 우편함을 비운다 — 그 시도가 원장에 없거나 닫혔고 이 프로세스의
+  실행 목록에도 없으면 NOT_RUNNING, 원장 행이 열려 있으면 답하지 않는다. 남은 통지가 있거나 세션이 실패하면 그 회차는 일을 받지 않는다(`MAILBOX_NOT_EMPTY` ·
+  `MAILBOX_SESSION_FAILED` — agent-loop 는 다음 회차에 다시). `--use-mailbox` 는 `--run-ledger` · `--require-ack-receipt` 없이 기동 거부. agent-loop 가
+  `MAILBOX_` 줄을 운영자 출력으로 옮긴다. 런북: Coordinator 의 `--mailbox-gate` 는 모든 노드가 `--use-mailbox` 로 돈 뒤 켠다
+- ★ 아직 없는 것: **실행 중** 감시 스레드(그 시도가 지금 도는 중에 통지가 오면 멈추고 STOPPED) — 다음 조각(4b). 지금은 회차 사이에만 묻는다
+- 검증: 단위(원장 행 없음 · 닫힘 → NOT_RUNNING · 열림 → 보류 · 원장 꺼짐 → 보류 · 기동 거부 둘). 실제 프로세스 — 옛 시도 통지가 있는 노드의 실제 Agent 가
+  우편함을 비운 뒤(NOT_RUNNING · 수신 확인) 관문을 켠 풀에서 새 작업의 수신 확인까지 간다 · 우편함 처리가 FRESH 보다 먼저다(대조군: 우편함을 끈 Agent 는 관문에
+  막힌다 — 조각 3 시험). 회차 전 비우기를 끄면 이 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1578 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(조각 3 · 412f442)의 검수 mbs1 — 첫 판에 `ACCEPTED`(기계 검수 · 빈 배달 · 답 없는 종료는 직접 시험하지 않았다는 참고)
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 23:41 — 대체 통지 우편함 조각 3 — Coordinator 의 MAILBOX 세션(배달 · 답 기록 · 수신 확인)과 새 실행 관문(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §2 · §4 · 규칙 2 · 4
+- 스트림: Coordinator · 런북
+- 수행: ① 풀 Coordinator 가 Hello mode MAILBOX(5)를 받는다(생존 관측으로 적지 않는다). 그 노드 앞 미확인 통지 **전부**를 저장한 서명 바이트 그대로 싣고 이 세션
+  nonce 로 겉을 서명해 배달한다 · 비면 답을 기다리지 않고 닫는다 · 답(노드 서명)은 조합 규칙(이 세션에서 배달한 것만 · 해시 · 중복 · enum) 뒤 한 BEGIN IMMEDIATE 로
+  acked_at · action · 답 바이트를 적고(잠금 뒤 저장 바이트로 해시를 다시 대조 · 이미 적힌 답은 덮지 않는다) **커밋 뒤에만** 수신 확인을 보낸다. 답 없이 닫히면
+  아무것도 적지 않는다(다음 세션에 다시 간다). ② `--mailbox-gate true`(풀 전용 · 아니면 기동 거부) — ACK 를 기록하는 같은 트랜잭션에서 그 시도 노드 앞 미확인
+  통지가 있으면 아무것도 적지 않고 `MailboxNotEmpty`(수신 확인 없음 → Agent 는 실행하지 않는다). ★ 런북에 "아직 켜지 않는다" 를 적었다 — Agent 쪽이 없어 켜면
+  통지를 받은 노드가 새 일을 영영 못 받는다
+- ★ 아직 없는 것: Agent 쪽(회차 전 묻기 · 실행 중 감시 스레드 · 처리 · 원장 대조 · `--use-mailbox`) — 다음 조각이다
+- 검증: 저장 단위(답 기록 — 해시 틀리면 전부 되돌림 · 다른 노드 거부 · 일부 답 · 재답 덮지 않음) · 관문 단위(통지 있으면 MAILBOX_NOT_EMPTY · 다른 노드 통지는 무관 ·
+  답하면 풀림 · 관문 끄면 지금처럼). 실제 프로세스 — 손으로 만든 노드가 풀 Coordinator 와 MAILBOX 세션을 세 번 왕복(그 노드 통지만 결정 시각 순 · 안 · 겉 · 수신 확인
+  서명을 Coordinator 키로 검증 · 배달하지 않은 통지의 답 거부 · 하나만 답하면 그것만 빠짐) · 실제 Agent 의 FRESH 가 관문에 막혀 수신 확인 · 실행 없음(대조: 관문 끄면
+  수신 확인까지) · 풀 밖 `--mailbox-gate` 기동 거부. 관문을 끄면 단위 · 프로세스 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1575 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0.
+  ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(조각 2 고침 · 2640977)의 재검수 mbc2 — `ACCEPTED`(기계 검수)
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 23:26 — 우편함 조각 2 검수 mbc1 반영 — 노드 없는 시도는 폐기하지 않는다 · 스케줄러 키를 노드가 믿는 공개키와 대조(브랜치 fork-merge)
+
+- 계획: 직전 항목(a392346)의 독립 검수 mbc1(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건
+- 스트림: Coordinator · CLI · 배포 파일
+- 수행: ① 시도에 노드가 없으면 통지 없이 폐기 · 큐 되돌리기를 커밋하던 길을 막았다 — 아무것도 쓰기 전에 그 Job 을 건너뛰고 `FAILOVER_SKIPPED_NO_NODE` 를 남긴다.
+  ★ 확인 범위: 시도 읽기(`fetch_attempt`)가 노드가 정확히 하나가 아닌 행을 이미 손상으로 거부하므로 지금 도달할 수 없는 길이다(이중 방어 · 시험 없음).
+  ② 스케줄러가 받은 키가 **노드가 믿는 Coordinator 키**인지 보지 않았다 — 다른 키로 서명하면 폐기만 되고 노드는 통지를 검증하지 못한다.
+  `--coordinator-pubkey`(노드의 `--peer-pubkey` 와 같은 값 GPUTEER_COORDINATOR_PUBKEY)를 필수로 받아 키 파일의 공개키와 대조한다 — 없거나 다르면 큐를 건드리기 전에
+  거부(`FAILOVER_NEEDS_COORDINATOR_PUBKEY` · `COORDINATOR_KEY_MISMATCH`). 배포 파일 · 런북 §4 · 통합 시험 함께. ③ 검수 참고: 저장소의 미확인 목록 읽기는
+  행 키와 바이트 속 notice_id · node_id 만 대조한다 — 나머지 필드 · 서명 검증은 배달을 받는 쪽(다음 조각의 Agent)이 맡는다
+- 검증: CLI 시험에 공개키 없음 · 다른 공개키 거부를 더했다(큐 그대로). Windows `cargo test --workspace -j 2` 1569 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 23:13 — 대체 통지 우편함 조각 2 — 장애 이어받기가 폐기와 같은 커밋에 서명 통지를 남긴다 · 스케줄러에 Coordinator 키 필수(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §3 · 규칙 1
+- 스트림: Coordinator · CLI · 배포 파일
+- 수행: 새 표 `coordinator_supersede_notices`(추가 전용 · 서명 포함 바이트 필수 · 답 칸은 비워 둔다)와 저장 모듈 `supersede_notice_store` — 통지 서명 ·
+  쓰기(조합 규칙을 먼저 보고 · 같은 notice_id 는 서명 대상이 같을 때만 멱등 · 다르면 SUPERSEDE_NOTICE_CONFLICT) · 노드별 미확인 목록(결정 시각 순).
+  장애 이어받기(`failover_lost_attempts`)는 서명자를 **필수 인자**로 받아, 옛 Lease 폐기 · 예약 만료 표시와 **같은 트랜잭션**에서 통지(NODE_LOST ·
+  처분 REQUEUED/FAILED = Job 이 간 곳)를 쓴다 — 쓰기가 실패하면 폐기도 되돌린다. `scheduler-tick` 은 `--failover-grace-ms` 에 `--coordinator-key-file`
+  (Coordinator 의 `--own-seed-file` 과 같은 파일)을 요구한다 — 없거나 못 읽으면 큐를 건드리기 전에 거부. 배포 파일(유닛 · scheduler.ps1) · 런북 §4 함께 고침
+- ★ 아직 배달하지 않는다 — MAILBOX 세션 · 새 실행 관문 · Agent 처리는 다음 조각이다. 소유자 선점 폐기(노드가 스스로 멈추고 보고)에는 통지를 쓰지 않는다(제안 §3)
+- 검증: 저장 단위 시험(서명 검증 · 다른 키 거부 · 멱등 · 충돌 · 잘못된 ID 거부 · 노드별 · 순서) · 장애 이어받기 시험(통지 하나 · 처분 · 재실행 멱등) ·
+  같은 커밋 시험(충돌 통지를 미리 넣으면 Job · Lease 가 그대로) · CLI 시험(키 없음 · 못 읽음 거부 · 키 있으면 배치). 통지 쓰기를 빼면 장애 시험이 실패함을
+  확인 뒤 원복. Windows `cargo test --workspace -j 2` 1569 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(배달 순서 · 6489a08)의 재검수 mbp2 — `ACCEPTED`(기계 검수)
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 22:59 — 우편함 계약층 검수 mbp1 반영 — 배달은 결정 시각 오래된 순이어야 한다(브랜치 fork-merge)
+
+- 계획: 직전 항목(3057e5d)의 독립 검수 mbp1(Codex gpt-6-sol) `CHANGES_REQUESTED` 1건 — 계약 §1 은 배달의 통지를 decided_at 오래된 순으로 정했는데 조합 규칙이 순서를 보지 않았다
+- 스트림: Protocol
+- 수행: `validate_mailbox_delivery` 가 decided_at 이 줄어들면 `OutOfOrder` 로 거부한다(같은 시각끼리는 순서를 정하지 않는다 — 저장소는 notice_id 순으로 보낸다).
+  나머지(필드 · enum · 서명 칸 · domain 길이 · 수명 · canonical · notice_id · 해시 · 프레임 21 ~ 24 · 상한 · 벡터 교차 대조)는 검수가 계약과 맞다고 봤다
+- 검증: 순서 시험(오래된 순 통과 · 역순 거부 · 같은 시각 양쪽 통과). 순서 검사를 끄면 그 시험이 실패함을 확인 뒤 원복. `cargo test -p gputeer-protocol --lib mailbox` 5 passed
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 22:54 — 대체 통지 우편함 조각 1 — 계약층(메시지 넷 · 세션 모드 · 조합 규칙 · 벡터)(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3(검수 mb3 ACCEPTED · 사용자 결정 A — 진짜 우편함) · 구현 계획 v3 §2 조각 2
+- 스트림: Protocol(Coordinator 는 수신 분기 이름 넷만)
+- 수행: proto `lease.proto` — `SupersedeCause` · `SupersedeJobDisposition` · `MailboxAction` · `SupersedeNotice`(Coordinator 서명 · Evidence · 관측 시각 = decided_at) ·
+  `MailboxDelivery` · `SupersedeHandled`(서명 없는 답 한 줄) · `MailboxAck`(노드 서명) · `MailboxAckReceipt` — 배달 · 답 · 수신 확인은 ShortLived(만료 발급 + GRANT_TTL_MS ·
+  세션 nonce echo) · `SESSION_MODE_MAILBOX = 5`. domain 넷(`gputeer/v1/supersede-notice` · `mailbox-delivery` · `mailbox-ack` · `mailbox-receipt`) · signing.md §5(38종) ·
+  FrameType 21 ~ 24 · 프레임 읽기 상한은 종류별(우편함 넷은 1 과 작은 쪽). 조합 규칙 `gputeer_protocol::mailbox_rules` — notice_id 계산(길이 앞머리 붙인 BLAKE3) ·
+  통지 해시(BLAKE3(sig_input)) · 통지 · 배달 · 답 · 수신 확인 검사(다른 노드 · 다른 세션 · 중복 ID · 배달하지 않은 통지에 답 · 해시 불일치 · 모르는 enum · 빈 신원 거부).
+  벡터 v49 ~ v52b(86 -> 95) — notice_id · 통지 해시는 Rust 가 계산한 값으로 대조해 계산 벡터를 겸한다 · 스키마 지문
+- ★ 부르는 곳이 아직 없다 — Coordinator(failover 의 서명 통지 · MAILBOX 세션 · ACK 관문) · Agent(묻기 · 처리)는 다음 조각이다
+- 검증: 프로토콜 · 프레임 시험(규칙 5 · 벡터 1 · 프레임 상한 1 · 수명 4종). 답의 해시 대조를 끄면 규칙 시험이 실패함을 확인 뒤 원복. 참조 구현 self-test · 재생성 대조 95개 일치 ·
+  check_schema 오류 0 · check_docs 오류 0. Windows `cargo test --workspace -j 2` 1565 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(끊김 여유 0 고침 검수 m0r 반영 · bebf405)의 재검수 m0r2 — `ACCEPTED`(기계 검수 · 사람이 봤다고 쓰지 않는다)
+- 리포트: 제안 문서가 대신한다
+
+---
+
+## 2026-10-02 22:39 — 끊김 여유 0 고침 검수 m0r 반영 — 일시정지 풀기는 Lease 시한을 따로 본다 · 상단 안내 문구(브랜치 fork-merge)
+
+- 계획: 직전 항목(89a3395 — 여유 0 이어도 서명된 거부면 멈춘다)의 독립 검수 m0r(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건 반영
+- 스트림: Agent
+- 수행: ① 여유 0 이면 끊김 시한이 "없음"(u64::MAX)이라, 일시정지 풀기 판정이 그 시한만 보고 **만료된 Lease 로 작업을 다시 시작**할 수 있었다(갱신 응답을 기다리는 사이 만료 ·
+  아직 끊김 표시 전). 그 전 판에서는 여유 0 이면 감시가 없어 풀기 자체가 거부됐으니 이 커밋이 연 구멍이다. 감시에 **Lease 자체의 시한**(여유 없이 계산)을 따로 두고,
+  풀기 판정이 끊김 시한과 별개로 본다. ② 화면 상단 안내가 여유 0 작업에도 "그대로 두면 시한에 스스로 멈춘다" 고 단정했다 — 행 문구와 맞춰 "시간으로는 멈추지 않는다" 로
+  나눠 말한다(섞여 있으면 개수로). ③ 경계(검수가 짚은 것): 노드가 스스로 본 만료가 **서명된 Lease 의 누적 상한**에 닿은 것이면 Coordinator 응답 없이도 멈춘다 —
+  기존 누적 상한 정책 그대로이고 런북 §8b 문구에 적었다
+- 검증: 소유자 화면 단위 시험에 "여유 0 · 연결 정상 · Lease 시한 지남 → 풀기 거부" 를 더했다. 새 판정을 끄면 그 시험이 실패함을 확인 뒤 원복.
+  Windows `cargo test --workspace -j 2` 1558 passed · 0 failed · 바뀐 줄 clippy 0 · 서식 검사 통과. ★ 리눅스 서버가 접속되지 않아 이번에도 재지 못했다
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-02 22:11 — 끊김 여유 0 이어도 서명된 거부면 멈춘다 · 우편함은 선택 A(사용자 결정) · 계획 v3(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` v3(검수 p1 · p2 반영) §2 — 사용자 결정 2026-10-02 **A**(진짜 우편함 · 결정 D 그대로 — "1로해").
+  상황(소유자 "계속 돌리기" · 끊김 · 다른 노드로 넘어감 · 재연결)과 두 선택지의 얻고 잃는 것을 설명한 뒤 골랐다. 이 항목은 그 계획의 **공통 고침**이다
+- 스트림: Agent
+- 수행: 전에는 `--disconnect-stop-margin-ms 0` 이면 연결 감시를 아예 걸지 않아, Coordinator 가 **서명해 거부**(폐기 · 대체 · 누적 상한)해도 작업이 끝까지 돌았다.
+  이제 감시는 늘 걸고 여유 0 이면 시간 시한만 "없음"(u64::MAX)으로 둔다 — 서명된 거부가 오면 renew_refused 가 시한을 지금으로 당겨 같은 정지 경로를 탄다
+  (DISCONNECT_STOPPED · 소유자 되찾음 아님). 화면 JSON `ms_to_self_stop` 은 그때 null, 화면 문구 "시간으로는 멈추지 않는다(끊김 여유 0)". 런북 §8b
+- 검증: 실제 프로세스(Windows) — 여유 0 · 실행 중 첫 갱신이 서명된 REVOKED → 약 20초 작업이 14초 전에 멈춤 · OWNER_STOPPED 없음. 기존 "여유 0 이고 끊기기만 하면 끝까지
+  돈다" 시험 그대로 통과. 감시를 여유 > 0 일 때만 돌리게 되돌리면 새 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace` 1558 passed · 0 failed.
+  ★ 두 여유 0 시험을 함께 돌린 첫 실행에서 기존 시험이 60초 시한에 걸렸다(그 실행 전체 396초 — 기계 부하). 같은 조합 두 번 더 · 단독 한 번은 통과(약 31초 · 19초) —
+  원인을 확정하지 않았다. ★ 리눅스 서버가 접속되지 않아(시한 초과) 이번에는 재지 못했다. 바뀐 줄 clippy 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-01 17:34 — 관문 5 ⑦ 확인 — 끊겨 스스로 멈춘 노드의 늦은 정지 보고는 이미 옛 예약을 푼다(사람 불필요) · 시험으로 고정(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 결정 D — "사람 확인 대신 기계 증거로 자동 해제". 실행 알림 계약(v17) 구현을 이어가기 전에, **이미 되는 것**을
+  먼저 가렸다
+- 스트림: Coordinator(시험만)
+- 수행: 저장소 시험 하나 — 시도가 돌던 노드의 Lease 가 끝나 장애 이어받기가 Job 을 되돌리고(옛 예약은 지우지 않고 만료 표시 · 옛 Lease 폐기), 그 뒤 옛 노드가
+  돌아와 "중단됨 · 종료 관측" 보고를 보내면 **그 보고 하나로 옛 예약이 풀리고** 이어받은 Job 상태는 그대로다. 실제 보고 연결에서는 운영자 스위치
+  `--release-on-exit-report` 와 예약 주인 대조(그 시도가 주인)를 거쳐 같은 저장 경로를 탄다(`store_terminal_report_with_policy`)
+- 의미: 노드가 끊김 시한에 **스스로 멈춘** 흔한 경우(관문 5 ① · 2026-09-30)는 새 메시지 없이도 옛 예약이 풀린다. 사람이 필요한 것은 노드가 **강제로 죽어** 종료를
+  관측하지 못한 경우다 — 그것이 실행 알림 계약(RUN_UNKNOWN · STOP_CONFIRMED)의 몫이다(다음 조각들)
+- ★ 확인 범위: 저장소 단위다. 두 노드 · 연결 끊김 · 재연결까지의 실제 프로세스 흐름은 재지 않았다(시험 장치에 한 노드만 끊는 길이 없다)
+- 검증: `cargo test -p gputeer-coordinator --lib a_late_observed_stop_after_failover` 통과. 해제 요청을 빼면 실패함을 확인 뒤 원복
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-01 15:56 — 실행 알림 계약층 검수 rn1 반영 — 응답 해시를 계약 관계대로 · 응답 만료 · 프레임 20 시험 · 주석 정정(브랜치 fork-merge)
+
+- 계획: 직전 항목(3700b48)의 독립 검수 rn1(Codex gpt-6-sol) CHANGES_REQUESTED 3건. 같은 검수가 "칸 번호 · 타입 · 도메인 길이 · 서명 대상 · Evidence 관측 시각 ·
+  응답 만료식 · 서명 필드 사용 전 종류별 상한 · 다른 디코드 경로 없음" 은 확인했다
+- 스트림: Protocol · crypto(시험)
+- 수행: ① 조합 규칙 모듈 주석이 "받는 쪽이 부른다" 고 현재형으로 적었지만 부르는 곳이 없다 → 다음 조각(받는 쪽)의 의무로 고쳐 적었다. ② 수명 시험이 응답 만료를
+  "0 아님" 만 봤다 → 정확히 발급 + GRANT_TTL_MS. 프레임 시험이 19 만 봤다 → 20(응답) v2 도 호출자 상한 2 에서 거부 · v1 통과. ③ v48 의 notice_hash 가 임의 바이트라
+  계약의 "notice_hash = BLAKE3-256(알림 sig_input)" 관계를 보이지 못했다 → v47b(같은 시도 · 종류 · 순번의 STOP_CONFIRMED)의 서명 입력 해시로 만든다(참조 구현 ·
+  Rust 시험 모두 계산 · blake3 가 없으면 참조 구현이 멈춘다). 바뀐 벡터는 이 가지에서 새로 만든 v48 · v48b 둘뿐(원격에 올라간 벡터 무변경)
+- 검증: protocol · crypto 372 passed · 0 failed. 응답(20)을 종류별 상한에서 빼면 프레임 시험이 실패함을 확인 뒤 원복. 바뀐 줄 clippy 0 · 벡터 86 일치
+- 리포트: 계획 문서가 대신한다
+
+---
+
+## 2026-10-01 15:50 — 실행 여부 불명 계약 v17 구현 조각 1 — 실행 알림 · 그 응답 메시지(AttemptRunNotice · AttemptRunNoticeAck)(브랜치 fork-merge)
+
+- 계획: `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` v17 §1(독립 검수 ACCEPTED b17 · 사용자 결정 D6~D9 · 승인 절 "구현은 조각별로,
+  운영 활성화는 선행 조각 뒤에만"). `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 결정 D(대체 통지 + 기계 증거로 자동 해제)의 첫 조각 — 관문 5 의 ⑦
+- 스트림: Protocol(proto · 규범 · 벡터) · crypto(프레이밍)
+- 수행: proto `artifact.proto` — 최상위 enum 넷(RunNoticeKind · RunUnknownOrigin · RunUnknownReason · RunStopEvidence) · `AttemptRunNotice`(노드 서명 · Evidence ·
+  관측 시각은 observed_at 칸) · `AttemptRunNoticeAck`(Coordinator 서명 · ShortLived · replay nonce = session_nonce). domain `gputeer/v1/attempt-run-notice` ·
+  `gputeer/v1/attempt-run-ack`(32바이트 고정 — 계약 b8 ①) · signing.md §5 표(34종). FrameType 19 · 20 · `IngressMessage` 두 갈래. ★ 프레임 읽기의
+  schema_version 상한을 **종류별로** — 19 · 20 은 호출자 상한과 `ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION`(1) 중 작은 쪽(계약 b14 ③ — REPORT 세션이 상한 2 로 읽어도
+  알림 v2 는 거부, AttemptReport v2 는 통과). 조합 규칙 `gputeer_protocol::attempt_run_notice_rules`(sequence ≥ 1 · 종류별 칸 모양 · 모르는 enum 거부).
+  참조 구현 · 벡터 v47/v47b/v47c/v48/v48b(81 → 86, 기존 무변경) · 스키마 지문. Coordinator · Agent 는 아직 이 메시지를 보내거나 받지 않는다(다음 조각)
+- 검증: 단위 — 조합 규칙(정상 둘 · 위반 열둘 · 응답 셋) · 수명 시험(알림 Evidence · 관측 시각 · 응답 ShortLived) · 벡터 대조 · 도메인 수 28 → 30 · 칸 번호 감사.
+  프레임 — 호출자 상한 2 에서 알림 v2 거부 · 알림 v1 통과 · AttemptReport v2 통과(종류별 상한을 빼면 실패함을 확인 뒤 원복). Windows `cargo test --workspace` 1556 passed · 0 failed. 리눅스 서버(비-root) protocol · crypto · coordinator · agent · runtime-linux 1014 passed · 0 failed(ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 0(새 정규화의 이중 형변환 경고를 고친 뒤 protocol 217 passed) · 문서 검사 0 · 벡터 86 일치
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 13:24 — 곧 끝남 검수 nf1 반영 — 누적 상한까지만 · 여유는 줄이지 않음 · 얼린 작업 제외 · 시계가 뒤로 가면 예상 안 함(브랜치 fork-merge)
 
 - 계획: 직전 항목(dcc3fb9)의 독립 검수 nf1(Codex gpt-6-sol) CHANGES_REQUESTED 4건. 같은 검수가 "H 는 재배치 경계를 넘지 않는다 · 갱신 성공 시 새 Lease 로 H 를
