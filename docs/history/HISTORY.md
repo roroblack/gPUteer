@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-10-14 09:59 — 실행 알림 계획 §5 2번 재검수 — 런타임 대상 신원 대조는 지금으로 충분(한계 문구 보강 · 격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 2번 · §1 "런타임" 조건
+- 스트림: Agent(문서 · 주석만)
+- 수행: 대조가 가르는 위협(context · 소켓 대상 변경 → 다른 데몬의 '없음')과 남는 위협(VM 복제 · 디스크 복원으로 같은 신원)을 가렸다. podman 에 엔진 · 기계
+  고유 ID 가 있는지 원본 소스(`libpod/define/info.go` HostInfo · StoreInfo)로 확인했다 — 없다. `/etc/machine-id` · boot_id 는 각각 복제에서 복사됨 · 재부팅마다
+  OPEN 이라 더하지 않았다. 계획 §5 2번에 결론 · 다시 볼 조건을, `runtime_target.rs` 머리말에 한계 예를 적었다. 코드 동작 변경 없음
+- 검증: Codex gpt-6-sol 1회차 합의(A · 기계 검토 — 첫 호출은 이 기계의 메모리 부족으로 답 없이 종료, 재호출). 실제 복제 VM 으로 재현해 보지는 않았다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-05 02:54 — 실행 알림 계획 §5 5번 — 운영자 취소 `gputeer cancel-job`(계약 v18q · 격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 §5 5번 · 계약 §9 「★ v18q」(설계 검수 3회차 ACCEPTED) · state-machines.md Job 표 STAGING · RUNNING -> CANCELLED 조건부 effect

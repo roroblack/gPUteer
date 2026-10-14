@@ -10,6 +10,8 @@
 //! 조회        그 ID · 그 이름(`inspect --type container`) · owner 라벨 목록 안의 그 이름. not-found 만 "없음" 이다(목록에 나오면 상태가 무엇이든 있음 — v18g)
 //! ```
 //! ★ 한계(계약 그대로) — 같은 엔드포인트 뒤의 데몬이 다른 기계로 바뀌고 신원까지 같게 보이는 경우는 가르지 못한다.
+//!   ★ 2026-10-14 09:59 (계획 §5 2번 재검수 — Codex 합의) 예: VM 복제 · 디스크 복원(docker 의 engine-id 와 podman 의 호스트 이름 · 경로가 그대로 복사된다).
+//!   podman 은 엔진 · 기계 고유 ID 를 주지 않는다(`podman info` 의 Host · Store 에 그런 칸이 없다) — 그래서 더 단단한 값을 더하지 않았다.
 
 use std::ffi::OsString;
 use std::path::Path;
