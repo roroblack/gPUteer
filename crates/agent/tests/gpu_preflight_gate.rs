@@ -72,6 +72,7 @@ fn policy(gpu: Option<GpuRequirements>) -> ExecutionPolicy {
         cgroup_parent: None,
         container: gputeer_agent::container::ContainerDecision::Host,
         allow_elevated_host: false,
+        on_container_created: None,
     }
 }
 

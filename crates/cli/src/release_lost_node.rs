@@ -1,7 +1,7 @@
 //! `gputeer release-lost-node` — 끊긴 노드의 옛 예약을 **운영자 확인으로** 푼다(신뢰망 남은 일 G).
 //!
 //! ```text
-//! gputeer release-lost-node --control-db <db> --node <node_id> --operator-statement "<누가 무엇을 확인했나>"
+//! gputeer release-lost-node --control-db <db> --node <node_id> --operator-statement "<누가 무엇을 확인했나>" [--failover-grace-ms <ms>]
 //! ```
 //!
 //! 장애 이어받기는 옛 예약을 지우지 않는다 — 그 노드가 살아서 옛 작업을 계속 돌리고 있을 수 있다(Coordinator 는 증명할 수
@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     for known in flags.keys() {
         if !matches!(
             known.as_str(),
-            "--control-db" | "--node" | "--operator-statement"
+            "--control-db" | "--node" | "--operator-statement" | "--failover-grace-ms"
         ) {
             return Err(format!("RELEASE_ARGS_REFUSED: 모르는 인자 {known}"));
         }
@@ -41,15 +41,24 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let control_db = need("--control-db")?;
     let node = need("--node")?;
     let statement = need("--operator-statement")?;
+    // ★ 2026-10-05 (실행 알림 계약 v18q ⑤ (b)) — 취소된 Job 의 최신 시도 예약은 장애 이어받기와 같은 유예가 지나야 푼다. 그 경우에만 쓴다.
+    let failover_grace_ms = flags
+        .get("--failover-grace-ms")
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|e| format!("RELEASE_ARGS_REFUSED: --failover-grace-ms 파싱 실패: {e}"))
+        })
+        .transpose()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis() as u64;
-    let released = gputeer_coordinator::failover::release_lost_node_by_operator(
+    let released = gputeer_coordinator::failover::release_lost_node_by_operator_with(
         std::path::Path::new(&control_db),
         &node,
         &statement,
         now,
+        failover_grace_ms,
     )?;
     Ok(format!(
         "LOST_NODE_RELEASED node_id={} attempt_id={} job_id={} gpus={}",

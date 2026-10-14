@@ -175,7 +175,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
 }
 
 /// 서명키를 **파일에서만** 읽는다. 명령줄에 남기지 않는 것이 목적이다.
-fn load_signing_key(path: &str) -> Result<SigningKey, String> {
+pub(crate) fn load_signing_key(path: &str) -> Result<SigningKey, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("서명키 파일을 열지 못했다({path}): {e}"))?;
     let hex = raw.trim();

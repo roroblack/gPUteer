@@ -332,7 +332,7 @@ section{background:var(--card);border:1px solid var(--line);border-radius:10px;p
 h2{font-size:15px;margin:0 0 8px}
 table{border-collapse:collapse;width:100%;min-width:640px} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-weight:600} td.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
-.RUNNING,.COMPLETED{color:var(--ok)} .STAGING,.QUEUED,.INTERRUPTED{color:var(--warn)} .FAILED{color:var(--bad)}
+.RUNNING,.COMPLETED{color:var(--ok)} .STAGING,.QUEUED,.INTERRUPTED{color:var(--warn)} .FAILED{color:var(--bad)} .CANCELLED{color:var(--muted)}
 .yes{color:var(--bad)} #err{color:var(--bad)} .empty{color:var(--muted)}
 button{font:inherit;padding:4px 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
 pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,monospace;font-size:12px}

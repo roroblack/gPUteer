@@ -124,6 +124,8 @@ pub struct ReservedStageResult {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StagingStoreError {
     InvalidInput(&'static str),
+    /// ★ 2026-10-03 12:26 (실행 알림 계획 조각 6b · 계약 §9 불변식) — 그 Job 에 재배치 차단 보류가 있다(실행 여부 불명 · D6). 새 시도를 만들지 않는다.
+    JobHeld(String),
     JobNotFound,
     JobNotQueued(JobState),
     OperationConflict,
@@ -157,6 +159,10 @@ impl std::fmt::Display for StagingStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidInput(field) => write!(f, "invalid staging input: {field}"),
+            Self::JobHeld(job_id) => write!(
+                f,
+                "JobHeld: Job {job_id} 에 재배치 차단 보류가 있다(실행 여부 불명) — 새 시도를 만들지 않는다"
+            ),
             Self::JobNotFound => write!(f, "job_id is not present in the control DB"),
             Self::JobNotQueued(state) => write!(f, "Job is not QUEUED: {state:?}"),
             Self::OperationConflict => write!(f, "staging operation key payload conflict"),
@@ -347,6 +353,9 @@ pub enum GrantAcceptedRecord {
     NotCurrentAttempt,
     /// Coordinator 시계가 예약 시각보다 뒤다 — 시각을 지어내지 않으려고 아무것도 적지 않았다.
     ClockBehindStaging,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4 새 작업 관문) — 그 노드 앞으로 답을 받지 못한 대체 통지가 있다 — 아무것도 적지 않았다.
+    ///   수신 확인이 나가지 않아 Agent 는 실행하지 않는다. 우편함을 비우면(MAILBOX 세션) 다음 FRESH 에서 풀린다.
+    MailboxNotEmpty,
 }
 
 impl GrantAcceptedRecord {
@@ -357,6 +366,7 @@ impl GrantAcceptedRecord {
             Self::StartingStillCurrent => "starting_still_current",
             Self::NotCurrentAttempt => "not_current_attempt",
             Self::ClockBehindStaging => "clock_behind_staging",
+            Self::MailboxNotEmpty => "mailbox_not_empty",
         }
     }
 }
@@ -387,11 +397,15 @@ impl CoordinatorStagingStore {
 
     /// `job_moves_on_ack` — 참이면 전처럼 ACK 가 Job 을 `STAGING -> RUNNING` 으로 옮긴다(풀 밖 lane — 수신 확인도 실행 중 갱신도 없다).
     /// 거짓이면(풀 모드) 시도만 STARTING 으로 적고 Job 은 첫 진행 신호(`record_process_started`)가 옮긴다(결함 218).
+    ///
+    /// `mailbox_gate` — 참이면(풀 모드 `--mailbox-gate`) 같은 트랜잭션 안에서 그 시도 노드 앞 미확인 대체 통지를 보고, 하나라도 있으면
+    /// 아무것도 적지 않고 `MailboxNotEmpty` 를 돌려준다(우편함 v3 §4 · 규칙 2). 통지 커밋과 BEGIN IMMEDIATE 로 직렬화된다.
     pub fn record_grant_accepted(
         &mut self,
         attempt_id: &str,
         now_unix_ms: u64,
         job_moves_on_ack: bool,
+        mailbox_gate: bool,
     ) -> Result<GrantAcceptedRecord, StagingStoreError> {
         let transaction = self
             .connection
@@ -421,6 +435,16 @@ impl CoordinatorStagingStore {
             } else {
                 GrantAcceptedRecord::AlreadyRecorded
             });
+        }
+        // ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 규칙 2) — 새 실행의 관문. 수신 확인이 나가는 유일한 결과(Recorded) 바로 앞에서 본다.
+        //   그 노드가 아직 처리하지 않은 "그 시도는 폐기됐다" 가 있으면 새 일을 시작하게 두지 않는다 — 옛 시도가 아직 돌 수 있다.
+        if mailbox_gate {
+            let node_id = attempt.node_ids.first().map(String::as_str).unwrap_or("");
+            let pending = crate::supersede_notice_store::unacked_count(&transaction, node_id)
+                .map_err(StagingStoreError::Io)?;
+            if pending > 0 {
+                return Ok(GrantAcceptedRecord::MailboxNotEmpty);
+            }
         }
         // ★ 2026-09-25 (결함 218) — 풀 모드의 ACK 는 시도만 STARTING 으로 적는다. Job 은 첫 진행 신호(record_process_started)가 RUNNING 으로 옮긴다.
         let current = if job_moves_on_ack {
@@ -970,6 +994,11 @@ fn insert_attempt(
     connection: &Connection,
     attempt: &StoredAttempt,
 ) -> Result<(), StagingStoreError> {
+    // ★ 2026-10-03 12:26 (조각 6b · 계약 §9 "시도를 만드는 모든 경로의 마지막 관문") — 시도를 만드는 곳은 여기 하나다(QUEUED · PAUSED · REPLAN 의 직접 경로 모두).
+    //   같은 트랜잭션(BEGIN IMMEDIATE)에서 다시 읽으므로 알림 커밋과 직렬화된다 — 알림이 먼저 커밋되면 여기서 막힌다(§2 순서 A).
+    if crate::job_holds::job_is_held(connection, &attempt.job_id).map_err(StagingStoreError::Io)? {
+        return Err(StagingStoreError::JobHeld(attempt.job_id.clone()));
+    }
     connection
         .execute(
             "INSERT INTO coordinator_attempts(
@@ -1769,6 +1798,120 @@ mod tests {
         );
     }
 
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 규칙 2) — 관문을 켜면 그 노드 앞 미확인 통지가 있는 동안 ACK 를 적지 않는다(MAILBOX_NOT_EMPTY).
+    ///   다른 노드 앞 통지 · 답이 적힌 통지는 막지 않는다. 관문을 끄면 통지가 있어도 지금처럼 적는다.
+    #[test]
+    fn the_mailbox_gate_withholds_an_ack_while_the_node_has_unacked_notices() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-a", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-a", 1);
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, 7)
+            .unwrap();
+        let signer = crate::supersede_notice_store::test_signer();
+        let notice_for = |node: &str, attempt: &str| {
+            crate::supersede_notice_store::sign_notice(
+                &signer,
+                &crate::supersede_notice_store::SupersededAttempt {
+                    job_id: "old-job".into(),
+                    attempt_id: attempt.into(),
+                    node_id: node.into(),
+                    fence_epoch: 1,
+                    lease_id: "old-lease".into(),
+                    cause: gputeer_protocol::pb::SupersedeCause::NodeLost,
+                    job_disposition: gputeer_protocol::pb::SupersedeJobDisposition::Requeued,
+                    decided_at_unix_ms: 100,
+                },
+            )
+        };
+        // 다른 노드 앞 통지는 이 노드를 막지 않는다 — 아래에서 관문을 켜고도 적힌다(대조)
+        crate::supersede_notice_store::record_within(
+            &store.connection,
+            &notice_for("node-2", "old-attempt-2"),
+        )
+        .unwrap();
+        let mine = notice_for("node-1", "old-attempt-1");
+        crate::supersede_notice_store::record_within(&store.connection, &mine).unwrap();
+
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 250, false, true)
+                .unwrap(),
+            GrantAcceptedRecord::MailboxNotEmpty
+        );
+        assert_eq!(
+            store
+                .get_attempt(&request.attempt_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Created,
+            "관문이 막았는데 시도를 적었다"
+        );
+        // 노드가 답하면(커밋) 풀린다
+        let ack = gputeer_protocol::pb::MailboxAck {
+            schema_version: 1,
+            node_id: "node-1".into(),
+            handled: vec![gputeer_protocol::pb::SupersedeHandled {
+                notice_id: mine.notice_id.clone(),
+                notice_hash: Some(gputeer_protocol::mailbox_rules::supersede_notice_hash(
+                    &mine,
+                )),
+                action: gputeer_protocol::pb::MailboxAction::NotRunning as i32,
+            }],
+            issued_at_unix_ms: 240,
+            session_nonce: vec![1u8; 16],
+            node_signature: vec![b'N'; 64],
+        };
+        assert_eq!(
+            crate::supersede_notice_store::record_acks(&path, "node-1", &ack, 245).unwrap(),
+            vec![mine.notice_id.clone()]
+        );
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 250, false, true)
+                .unwrap(),
+            GrantAcceptedRecord::Recorded
+        );
+    }
+
+    /// 관문을 끄면 미확인 통지가 있어도 지금처럼 적는다(풀 밖 · 우편함을 켜지 않은 풀).
+    #[test]
+    fn without_the_mailbox_gate_an_ack_is_recorded_despite_notices() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-a", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-a", 1);
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, 7)
+            .unwrap();
+        let notice = crate::supersede_notice_store::sign_notice(
+            &crate::supersede_notice_store::test_signer(),
+            &crate::supersede_notice_store::SupersededAttempt {
+                job_id: "old-job".into(),
+                attempt_id: "old-attempt-1".into(),
+                node_id: "node-1".into(),
+                fence_epoch: 1,
+                lease_id: "old-lease".into(),
+                cause: gputeer_protocol::pb::SupersedeCause::NodeLost,
+                job_disposition: gputeer_protocol::pb::SupersedeJobDisposition::Failed,
+                decided_at_unix_ms: 100,
+            },
+        );
+        crate::supersede_notice_store::record_within(&store.connection, &notice).unwrap();
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 250, false, false)
+                .unwrap(),
+            GrantAcceptedRecord::Recorded
+        );
+    }
+
     /// ★ 2026-09-23 (신뢰망 남은 일 D) — 검증된 ACK 가 시도 STARTING · Job RUNNING 을 **한 커밋에** 적는다.
     ///
     /// 두 번째 ACK(같은 시도의 재접속)는 아무것도 바꾸지 않는다. Coordinator 시계가 예약 시각보다 뒤면
@@ -1788,7 +1931,7 @@ mod tests {
         // 시계가 예약 시각(200)보다 뒤 — 적지 않는다.
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 150, false)
+                .record_grant_accepted(&request.attempt_id, 150, false, false)
                 .unwrap(),
             GrantAcceptedRecord::ClockBehindStaging
         );
@@ -1803,7 +1946,7 @@ mod tests {
 
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 250, false)
+                .record_grant_accepted(&request.attempt_id, 250, false, false)
                 .unwrap(),
             GrantAcceptedRecord::Recorded
         );
@@ -1827,7 +1970,7 @@ mod tests {
 
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 260, false)
+                .record_grant_accepted(&request.attempt_id, 260, false, false)
                 .unwrap(),
             GrantAcceptedRecord::AlreadyRecorded
         );

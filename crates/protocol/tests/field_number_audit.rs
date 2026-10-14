@@ -270,6 +270,15 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("artifact.proto", "AttemptReportAck", 90),
     // 결함 131 (2026-09-23)
     ("control.proto", "GrantAckReceipt", 90),
+    // 실행 여부 불명 계약 v17 (2026-10-01)
+    ("artifact.proto", "AttemptRunNotice", 90),
+    ("artifact.proto", "AttemptRunNoticeAck", 90),
+    // 대체 통지 우편함 v3 (2026-10-02) — 서명 칸 90 · 답 한 줄(서명 없는 중첩 메시지)
+    ("lease.proto", "SupersedeNotice", 90),
+    ("lease.proto", "MailboxDelivery", 90),
+    ("lease.proto", "MailboxAck", 90),
+    ("lease.proto", "MailboxAckReceipt", 90),
+    ("lease.proto", "SupersedeHandled", 90),
     // 결함 301 (2026-09-25) — Hello v2 의 GPU 관측(서명 없는 중첩 메시지)
     ("lease.proto", "NodeGpuObservation", 90),
     ("lease.proto", "ObservedGpu", 90),

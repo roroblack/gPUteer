@@ -8,12 +8,14 @@
 //! 이 크레이트는 Protocol 스트림이 소유한다 (`docs/contracts/01_스트림_소유권.md`).
 
 pub mod attempt_report_rules;
+pub mod attempt_run_notice_rules;
 pub mod attempt_state;
 pub mod canonical;
 pub mod constants;
 pub mod execution_spec;
 pub mod fenced_operation;
 pub mod job_state;
+pub mod mailbox_rules;
 pub mod membership;
 pub mod nonce;
 pub mod participation;

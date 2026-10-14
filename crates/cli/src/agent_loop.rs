@@ -232,7 +232,7 @@ fn merge(stdout: RoundLines, stderr: RoundLines) -> RoundLines {
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
 ///
 /// ★ 결함 504 (재검수 126) — 컨테이너를 남긴 · 지우지 못한 이유와 사건 표식 기록도 옮겨 찍는다(전에는 자식의 출력에만 있어 서비스 로그에서 사라졌다).
-const FORWARDED_PREFIXES: [&str; 17] = [
+const FORWARDED_PREFIXES: [&str; 18] = [
     INCIDENT_NOT_RECORDED,
     RUN_LEDGER_FATAL,
     "CONTAINER_INCIDENT_RECORDED",
@@ -250,6 +250,8 @@ const FORWARDED_PREFIXES: [&str; 17] = [
     "CHECKPOINT_PUBLISH_FAILED",
     "ATTEMPT_REPORT_ACKNOWLEDGED",
     "RESUME_REFUSED",
+    // ★ 2026-10-02 (대체 통지 우편함 v3) — 회차 전 우편함 처리(배달 · 처리 · 보류 · 수신 확인 · 원장 열림)를 운영자가 볼 수 있게.
+    "MAILBOX_",
 ];
 
 /// 회차가 사건 표식을 쓰지 못했다는 줄(`container::record_incident_if_needed`). 이 줄이 있으면 이 회차 뒤 루프를 멈춘다.
